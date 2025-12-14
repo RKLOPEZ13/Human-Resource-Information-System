@@ -2,7 +2,7 @@
 session_start();
 require_once "../config/db.php";
 
-// Correct paths — PHPMailer is now inside backend folder
+// Load PHPMailer
 require_once "PHPMailer/PHPMailer.php";
 require_once "PHPMailer/SMTP.php";
 require_once "PHPMailer/Exception.php";
@@ -13,6 +13,18 @@ use PHPMailer\PHPMailer\Exception;
 
 header("Content-Type: application/json");
 
+// =======================================
+// Step 0: Load environment variables (.env)
+// =======================================
+if (file_exists(__DIR__ . '/.env')) {
+    foreach (file(__DIR__ . '/.env') as $line) {
+        $line = trim($line);
+        if ($line && strpos($line, '=') !== false) {
+            putenv($line);
+        }
+    }
+}
+
 // 1. Security Check
 if (!isset($_SESSION['employee_number'])) {
     echo json_encode(["success" => false, "message" => "Unauthorized: Please log in."]);
@@ -22,9 +34,9 @@ if (!isset($_SESSION['employee_number'])) {
 // 2. Input Handling
 $subject = $_POST['subject'] ?? 'No Subject';
 $header = $_POST['header'] ?? '';
-$body = $_POST['content'] ?? '';
+$body = $_POST['content'] ?? ''; 
 $closing = $_POST['closing'] ?? '';
-$channels = $_POST['channels'] ?? '{}'; 
+$channels = $_POST['channels'] ?? '{}';
 $target = $_POST['target_type'] ?? 'All';
 
 $department_ids = isset($_POST['departments']) ? $_POST['departments'] : [];
@@ -54,11 +66,8 @@ if ($target === "All") {
     while ($r = $q->fetch_assoc()) $recipients[] = $r;
 
 } elseif ($target === "Department") {
-    // Note: department_ids comes from JS as an array of strings
     foreach ($department_ids as $d) {
         $d = $conn->real_escape_string($d);
-        
-        // Fetch Employees in this Dept
         $q = $conn->query("
             SELECT employee_number, email 
             FROM employees 
@@ -66,7 +75,6 @@ if ($target === "All") {
         ");
         while ($r = $q->fetch_assoc()) $recipients[] = $r;
 
-        // Log this department as a recipient group
         $conn->query("
             INSERT INTO announcement_recipients (announcement_id, department_id)
             VALUES ($announcement_id, '$d')
@@ -86,35 +94,33 @@ if ($target === "All") {
     }
 }
 
-// 5. Log Individual Recipients (for read receipts)
+// 5. Log Individual Recipients
 foreach ($recipients as $rec) {
     $emp = $rec['employee_number'];
-    // Avoid duplicates if user selected same person twice somehow
     $conn->query("
         INSERT IGNORE INTO announcement_recipients (announcement_id, employee_number)
         VALUES ($announcement_id, '$emp')
     ");
 }
 
-// 6. Send Email (Only if Email Channel is ON)
+// 6. Send Email (if Email Channel is ON)
 $channelObj = json_decode($channels);
 
 if (isset($channelObj->email) && $channelObj->email == true) {
     try {
         $mail = new PHPMailer(true);
         $mail->isSMTP();
-        $mail->Host = "smtp.gmail.com";
+        $mail->Host = getenv('SMTP_HOST');
         $mail->SMTPAuth = true;
-        $mail->Username = "samclifeedback@gmail.com";
-        $mail->Password = "bbww ncsu tdek dbmv";
+        $mail->Username = getenv('SMTP_USER');
+        $mail->Password = getenv('SMTP_PASS');
         $mail->SMTPSecure = "tls";
-        $mail->Port = 587;
+        $mail->Port = getenv('SMTP_PORT');
 
-        $mail->setFrom("samclifeedback@gmail.com", "HR Department");
+        $mail->setFrom(getenv('SMTP_USER'), "HR Department");
         $mail->isHTML(true);
         $mail->Subject = $subject;
 
-        // Bcc is better for announcements so people don't see everyone's email
         foreach ($recipients as $rec) {
             if (!empty($rec['email'])) {
                 $mail->addBCC($rec['email']);
@@ -130,14 +136,12 @@ if (isset($channelObj->email) && $channelObj->email == true) {
             </div>
         ";
 
-        // Only send if there are recipients
         if (count($recipients) > 0) {
             $mail->send();
         }
 
     } catch (Exception $e) {
-        // Log email error but don't stop the JSON success response
-        // error_log($mail->ErrorInfo);
+        // Optional: log $mail->ErrorInfo
     }
 }
 
