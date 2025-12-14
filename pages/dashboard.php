@@ -85,13 +85,13 @@
             <a href="main.php?page=announcement" class="btn btn-outline-primary d-flex align-items-center justify-content-start px-4 py-3">
               <i class="bi bi-megaphone me-3 fs-4"></i> Create Announcement
             </a>
-            <a href="main.php?page=recruitment" class="btn btn-outline-success d-flex align-items-center justify-content-start px-4 py-3">
-              <i class="bi bi-person-plus-fill me-3 fs-4"></i> Post Job / Review Candidates
+            <a href="main.php?page=employees" class="btn btn-outline-success d-flex align-items-center justify-content-start px-4 py-3">
+              <i class="bi bi-person-plus-fill me-3 fs-4"></i> View Employees
             </a>
             <a href="main.php?page=attendance" class="btn btn-outline-warning d-flex align-items-center justify-content-start px-4 py-3">
               <i class="bi bi-calendar-check me-3 fs-4"></i> Review Attendance
             </a>
-            <a href="main.php?page=leave" class="btn btn-outline-info d-flex align-items-center justify-content-start px-4 py-3">
+            <a href="main.php?page=attendance" class="btn btn-outline-info d-flex align-items-center justify-content-start px-4 py-3">
               <i class="bi bi-calendar-x me-3 fs-4"></i> Approve Leave Requests
             </a>
           </div>
