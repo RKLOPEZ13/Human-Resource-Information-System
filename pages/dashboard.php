@@ -10,11 +10,9 @@
 
 <section class="section dashboard">
   <div class="row align-items-stretch">
-
-    <!-- LEFT COLUMN: Metrics + Line Chart -->
     <div class="col-xxl-8">
 
-      <!-- Metric Cards (Real Data) -->
+      <!-- Metric Cards  -->
       <div class="row">
         <div class="col">
           <div class="card info-card sales-card">
@@ -65,20 +63,42 @@
         </div>
       </div>
 
-      <!-- Line Chart: Monthly Attendance Trend (2025) -->
+      <!-- Upcoming Leaves  -->
+      <div class="card mb-3">
+        <div class="card-body">
+          <h5 class="card-title">Upcoming Leaves</h5>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th>Employee</th>
+                  <th>Type</th>
+                  <th>Dates</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="upcomingLeavesBody">
+                <tr><td colspan="4" class="text-center text-muted">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Line Chart: Monthly Attendance Trend -->
       <div class="card">
         <div class="card-body">
           <h5 class="card-title">Attendance Trends <span class="text-muted small">| 2025</span></h5>
           <canvas id="lineChart"></canvas>
         </div>
       </div>
+
     </div>
 
-    <!-- RIGHT COLUMN: Quick Actions + Pie Chart -->
     <div class="col-xxl-4">
 
       <!-- Manager Quick Actions -->
-      <div class="card">
+      <div class="card mb-3">
         <div class="card-body">
           <h5 class="card-title text-center">Quick Actions</h5>
           <div class="d-grid gap-3">
@@ -109,8 +129,9 @@
   </div>
 </section>
 
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script> <!-- Make sure ApexCharts is loaded if using donut -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- For line chart -->
 <script>
   let lineChart, pieChart;
 
@@ -133,7 +154,7 @@
               { label: 'Late',    data: data.late, borderColor: 'rgb(234,179,8)', backgroundColor: 'rgba(234,179,8,0.1)', tension:0.3, fill:true }
             ]
           },
-          options: { responsive:true, plugins:{ legend:{ position:'top' }, tooltip:{ mode:'main', intersect:false } }, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } } }
+          options: { responsive:true, plugins:{ legend:{ position:'top' }, tooltip:{ mode:'index', intersect:false } }, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } } }
         });
       }
     });
@@ -141,7 +162,8 @@
     // Pie chart: Departments
     $.getJSON('./backend/get_department_data.php', function(data){
       if(pieChart){
-        pieChart.updateOptions({ series: data.counts, labels: data.departments });
+        pieChart.updateSeries(data.counts);
+        pieChart.updateOptions({ labels: data.departments });
       } else {
         pieChart = new ApexCharts(document.querySelector("#pieChart"), {
           series: data.counts,
@@ -157,12 +179,6 @@
     });
   }
 
-  $(document).ready(function(){
-    fetchData();
-    setInterval(fetchData, 5000);
-  });
-</script>
-<script>
   function fetchMetrics() {
       $.ajax({
           url: './backend/get_metrics.php',
@@ -179,7 +195,55 @@
       });
   }
 
-  fetchMetrics();
+  $(document).ready(function(){
+    fetchMetrics();
+    fetchData();
 
-  setInterval(fetchMetrics, 5000);
+    setInterval(fetchMetrics, 5000);
+    setInterval(fetchData, 5000);
+  });
+
+
+  // Fetch Upcoming Leaves
+  function loadUpcomingLeaves() {
+    $.getJSON('./backend/get_upcoming_leaves.php', function(data) {
+      const tbody = $('#upcomingLeavesBody');
+      tbody.empty();
+
+      if (!data.success || data.leaves.length === 0) {
+        tbody.append('<tr><td colspan="4" class="text-center text-muted">No upcoming leaves</td></tr>');
+        return;
+      }
+
+      data.leaves.forEach(leave => {
+        tbody.append(`
+          <tr>
+            <td>
+              <div class="d-flex align-items-center">
+                <div class="rounded-circle bg-secondary text-white d-flex align-items-center justify-content-center me-3" style="width:35px;height:35px;font-size:0.9rem;">
+                  ${leave.initials}
+                </div>
+                <div>
+                  <div class="fw-semibold">${leave.full_name}</div>
+                  <small class="text-muted">${leave.department}</small>
+                </div>
+              </div>
+            </td>
+            <td><span class="badge bg-${leave.type_class}">${leave.type}</span></td>
+            <td>${leave.dates}</td>
+            <td><span class="badge bg-${leave.status_badge}">${leave.status}</span></td>
+          </tr>
+        `);
+      });
+    }).fail(() => {
+      $('#upcomingLeavesBody').html('<tr><td colspan="4" class="text-danger text-center">Failed to load leaves</td></tr>');
+    });
+  }
+
+  // Load data on page ready
+  $(document).ready(function() {
+    loadUpcomingLeaves();
+
+    setInterval(loadUpcomingLeaves, 30000);
+  });
 </script>

@@ -50,6 +50,34 @@
   </div>
 </div>
 
+<div class="card mt-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h5 class="card-title mb-0">Employee Birthdays</h5>
+      <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-outline-primary active" id="showAllBirthdays">All</button>
+        <button type="button" class="btn btn-outline-primary" id="showUpcomingBirthdays">Upcoming</button>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Employee</th>
+            <th>Department</th>
+            <th>Birthday</th>
+            <th>Turns</th>
+          </tr>
+        </thead>
+        <tbody id="birthdaysBody">
+          <tr><td colspan="4" class="text-center text-muted">Loading birthdays...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="viewEmployeeModal" tabindex="-1">
   <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
@@ -211,8 +239,11 @@
   </div>
 </div>
 
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script>
 let allEmployees = [];
+let currentPage = 1;
+const itemsPerPage = 10;
 
 function getStatusBadge(status) {
   const map = {
@@ -287,12 +318,9 @@ function editEmployee(empNumber) {
   document.getElementById('empEmail').value = emp.email;
   document.getElementById('empPhone').value = emp.phone || '';
   document.getElementById('empAge').value = emp.age || '';
-  document.getElementById('empDept').value = emp.department;
+  document.getElementById('empDept').value = emp.department_id || '';
   document.getElementById('empPosition').value = emp.position;
-
-  const mgrName = (emp.manager_name === '—' || !emp.manager_name) ? '' : emp.manager_name;
-  document.getElementById('empManager').value = mgrName;
-
+  document.getElementById('empManager').value = emp.manager_number || '';
   document.getElementById('empType').value = emp.employment_type;
   document.getElementById('empLocation').value = emp.location;
   document.getElementById('empStatus').value = emp.status;
@@ -307,17 +335,18 @@ function editEmployee(empNumber) {
 
 document.addEventListener("DOMContentLoaded", () => {
 
-  function filterAndSearchEmployees() {
+  function filterAndPaginate() {
     const departmentFilter = document.getElementById('departmentFilter')?.value || '';
     const searchTerm = (document.getElementById('searchEmployee')?.value || '').toLowerCase();
-    let filteredEmployees = allEmployees;
+
+    let filtered = allEmployees;
 
     if (departmentFilter !== "") {
-      filteredEmployees = filteredEmployees.filter(emp => emp.department === departmentFilter);
+      filtered = filtered.filter(emp => emp.department === departmentFilter);
     }
 
     if (searchTerm.length > 0) {
-      filteredEmployees = filteredEmployees.filter(emp => {
+      filtered = filtered.filter(emp => {
         const fullName = `${emp.first_name} ${emp.last_name}`.toLowerCase();
         const position = (emp.position || '').toLowerCase();
         const email = (emp.email || '').toLowerCase();
@@ -325,31 +354,24 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    renderTable(filteredEmployees);
-  }
+    const totalItems = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+    currentPage = Math.min(currentPage, totalPages);
 
-  async function loadEmployees() {
-    try {
-      const res = await fetch('./backend/employees.php');
-      const json = await res.json();
+    const start = (currentPage - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    const pageData = filtered.slice(start, end);
 
-      if (json.success) {
-        allEmployees = json.data;
-        filterAndSearchEmployees();
-      }
-    } catch (err) {
-      console.error('Failed to load employees:', err);
-    }
+    renderTable(pageData);
+    renderPagination(totalPages, totalItems);
   }
 
   function renderTable(employees) {
     const tbody = document.getElementById('employeeTableBody');
-    if (!tbody) return;
-
     tbody.innerHTML = '';
 
     if (employees.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">No employees found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted">No employees found</td></tr>';
       return;
     }
 
@@ -374,6 +396,65 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  function renderPagination(totalPages, totalItems) {
+    let container = document.querySelector('.table-responsive');
+    let pagination = document.getElementById('paginationControls');
+
+    if (!pagination) {
+      pagination = document.createElement('div');
+      pagination.id = 'paginationControls';
+      pagination.className = 'd-flex justify-content-between align-items-center mt-4';
+      container.after(pagination);
+    }
+
+    pagination.innerHTML = `
+      <div class="text-muted small">
+        Showing ${(currentPage - 1) * itemsPerPage + 1} to ${Math.min(currentPage * itemsPerPage, totalItems)} of ${totalItems} employees
+      </div>
+      <nav>
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+            <a class="page-link" href="#" data-page="${currentPage - 1}">Previous</a>
+          </li>
+          ${Array.from({length: totalPages}, (_, i) => `
+            <li class="page-item ${i + 1 === currentPage ? 'active' : ''}">
+              <a class="page-link" href="#" data-page="${i + 1}">${i + 1}</a>
+            </li>
+          `).join('')}
+          <li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+            <a class="page-link" href="#" data-page="${currentPage + 1}">Next</a>
+          </li>
+        </ul>
+      </nav>
+    `;
+
+    pagination.querySelectorAll('.page-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const page = parseInt(link.dataset.page);
+        if (page >= 1 && page <= totalPages && page !== currentPage) {
+          currentPage = page;
+          filterAndPaginate();
+        }
+      });
+    });
+  }
+
+  async function loadEmployees() {
+    try {
+      const res = await fetch('./backend/employees.php');
+      const json = await res.json();
+
+      if (json.success) {
+        allEmployees = json.data;
+        currentPage = 1;
+        filterAndPaginate();
+      }
+    } catch (err) {
+      console.error('Failed to load employees:', err);
+    }
+  }
+
   async function loadDropdowns() {
     try {
       const [deptRes, mgrRes] = await Promise.all([
@@ -388,143 +469,43 @@ document.addEventListener("DOMContentLoaded", () => {
       const deptSelect = document.getElementById('empDept');
       const managerSelect = document.getElementById('empManager');
 
-      if (deptFilter) deptFilter.innerHTML = '<option value="">All Departments</option>';
-      if (deptSelect) deptSelect.innerHTML = '';
-
-      departments.forEach(d => {
-        if (deptFilter) deptFilter.add(new Option(d, d));
-        if (deptSelect) deptSelect.add(new Option(d, d));
-      });
+      if (deptFilter) {
+        deptFilter.innerHTML = '<option value="">All Departments</option>';
+        departments.forEach(d => deptFilter.add(new Option(d, d)));
+      }
+      if (deptSelect) {
+        deptSelect.innerHTML = '';
+        departments.forEach(d => deptSelect.add(new Option(d, d)));
+      }
 
       if (managerSelect) {
         managerSelect.innerHTML = '<option value="">None (Top Level)</option>';
-        managers.forEach(m => managerSelect.add(new Option(m.full_name, m.id)));
+        managers.forEach(m => managerSelect.add(new Option(m.full_name, m.employee_number)));
       }
     } catch (err) {
       console.error('Dropdown load failed:', err);
     }
   }
 
-  loadDropdowns();
-  loadEmployees();
-  setInterval(loadEmployees, 5000);
-
-  document.getElementById('departmentFilter')?.addEventListener('change', filterAndSearchEmployees);
-  document.getElementById('searchEmployee')?.addEventListener('keyup', filterAndSearchEmployees);
-
-  const addBtn = document.getElementById('addEmployeeBtn');
-  if (addBtn) {
-    addBtn.onclick = () => {
-      document.getElementById('employeeForm').reset();
-      document.getElementById('employeeFormTitle').textContent = "Add New Employee";
-      document.getElementById('empId').value = "";
-      new bootstrap.Modal('#employeeFormModal').show();
-    };
-  }
-
-  const saveBtn = document.getElementById('saveEmployeeBtn');
-  if (saveBtn) {
-    saveBtn.addEventListener('click', async () => {
-      const formData = new FormData();
-      const isEdit = document.getElementById('empId').value;
-
-      formData.append('emp_number', isEdit || '');
-      formData.append('first_name', document.getElementById('firstName').value);
-      formData.append('last_name', document.getElementById('lastName').value);
-      formData.append('email', document.getElementById('empEmail').value);
-      formData.append('phone', document.getElementById('empPhone').value);
-      formData.append('age', document.getElementById('empAge').value);
-      formData.append('department', document.getElementById('empDept').value);
-      formData.append('position', document.getElementById('empPosition').value);
-      formData.append('manager_id', document.getElementById('empManager').value || '');
-      formData.append('employment_type', document.getElementById('empType').value);
-      formData.append('location', document.getElementById('empLocation').value);
-      formData.append('status', document.getElementById('empStatus').value);
-      formData.append('emergency_contact', document.getElementById('empEmergency').value);
-      formData.append('address', document.getElementById('empAddress').value);
-      formData.append('date_hired', document.getElementById('empHiredDate').value);
-      formData.append('base_salary', document.getElementById('empSalary').value);
-      formData.append('date_terminated', document.getElementById('empTerminatedDate').value);
-
-      try {
-        const res = await fetch('./backend/save_employee.php', {
-          method: 'POST',
-          body: formData
-        });
-
-        const result = await res.json();
-
-        if (result.success) {
-          alert(result.message);
-          bootstrap.Modal.getInstance('#employeeFormModal').hide();
-          loadEmployees();
-        } else {
-          alert('Error: ' + result.message);
-        }
-      } catch (err) {
-        alert('Save failed. Check console.');
-        console.error(err);
-      }
-    });
-  }
-});
-
-function exportToCsv(filename, employees) {
-  if (employees.length === 0) {
-    alert("No data to export!");
-    return;
-  }
-
-  const headers = [
-    "Employee ID", "First Name", "Last Name", "Email", "Phone",
-    "Age", "Base Salary",
-    "Department", "Position", "Manager Name",
-    "Employment Type", "Location", "Status",
-    "Date Hired", "Date Terminated",
-    "Emergency Contact", "Address"
-  ];
-
-  let csvContent = headers.join(',') + '\n';
-
-  employees.forEach(emp => {
-    const row = [
-      `"${emp.employee_number}"`,
-      `"${emp.first_name}"`,
-      `"${emp.last_name}"`,
-      `"${emp.email}"`,
-      `"${emp.phone || ''}"`,
-      `"${emp.age || ''}"`,
-      `"${emp.base_salary || ''}"`,
-      `"${emp.department || ''}"`,
-      `"${emp.position}"`,
-      `"${emp.manager_name || ''}"`,
-      `"${emp.employment_type}"`,
-      `"${emp.location}"`,
-      `"${emp.status}"`,
-      `"${emp.date_hired}"`,
-      `"${emp.date_terminated || ''}"`,
-      `"${emp.emergency_contact || ''}"`,
-      `"${(emp.address || '').replace(/"/g, '""')}"`
-    ].join(',');
-    csvContent += row + '\n';
+  // Event listeners
+  document.getElementById('departmentFilter')?.addEventListener('change', () => {
+    currentPage = 1;
+    filterAndPaginate();
+  });
+  document.getElementById('searchEmployee')?.addEventListener('keyup', () => {
+    currentPage = 1;
+    filterAndPaginate();
   });
 
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
+  document.getElementById('addEmployeeBtn')?.addEventListener('click', () => {
+    document.getElementById('employeeForm').reset();
+    document.getElementById('employeeFormTitle').textContent = "Add New Employee";
+    document.getElementById('empId').value = "";
+    new bootstrap.Modal('#employeeFormModal').show();
+  });
 
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename);
-  link.style.visibility = 'hidden';
-
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
-
-const exportBtn = document.getElementById('exportBtn');
-if (exportBtn) {
-  exportBtn.addEventListener('click', () => {
+  document.getElementById('exportBtn')?.addEventListener('click', () => {
+    // Your export logic here (same as before)
     const departmentFilter = document.getElementById('departmentFilter')?.value || '';
     const searchTerm = (document.getElementById('searchEmployee')?.value || '').toLowerCase();
     let employeesToExport = allEmployees;
@@ -544,5 +525,88 @@ if (exportBtn) {
 
     exportToCsv('employee_roster.csv', employeesToExport);
   });
+
+  // Initial load
+  loadDropdowns();
+  loadEmployees();
+  setInterval(loadEmployees, 10000);
+});
+
+// Birthdays Section
+let allBirthdays = [];
+
+function loadBirthdays() {
+  $.getJSON('./backend/get_birthdays.php', function(response) {
+    const tbody = $('#birthdaysBody');
+    tbody.empty();
+
+    if (!response.success || response.birthdays.length === 0) {
+      tbody.html('<tr><td colspan="4" class="text-center text-muted py-4">No birthday data available</td></tr>');
+      return;
+    }
+
+    allBirthdays = response.birthdays;
+    renderBirthdays('all');
+  }).fail(function() {
+    $('#birthdaysBody').html('<tr><td colspan="4" class="text-center text-danger py-4">Failed to load birthdays</td></tr>');
+  });
 }
+
+function renderBirthdays(mode) {
+  const tbody = $('#birthdaysBody');
+  tbody.empty();
+
+  let list = [...allBirthdays];
+
+  if (mode === 'upcoming') {
+    const today = '12-20';
+
+    list = list.filter(b => b.birth_month_day >= today || b.birth_month_day <= '01-20');
+
+    list.sort((a, b) => {
+      if (a.birth_month_day >= today && b.birth_month_day < today) return -1;
+      if (b.birth_month_day >= today && a.birth_month_day < today) return 1;
+      return a.birth_month_day.localeCompare(b.birth_month_day);
+    });
+  }
+
+  if (list.length === 0) {
+    tbody.html('<tr><td colspan="4" class="text-center text-muted py-4">No upcoming birthdays in the next 30 days</td></tr>');
+    return;
+  }
+
+  list.forEach(emp => {
+    const yearText = emp.next_year === 2026 ? '2026' : '2025';
+    tbody.append(`
+      <tr>
+        <td>
+          <div class="d-flex align-items-center">
+            <div class="rounded-circle bg-secondary text-white d-flex align-items-center justify-content-center me-3" style="width:35px;height:35px;font-size:0.9rem;">
+              ${emp.initials}
+            </div>
+            <div class="fw-semibold">${emp.full_name}</div>
+          </div>
+        </td>
+        <td>${emp.department || 'N/A'}</td>
+        <td>${emp.birthday_display}</td>
+        <td><strong>${emp.age_next}</strong> in ${yearText}</td>
+      </tr>
+    `);
+  });
+}
+
+$(document).on('click', '#showAllBirthdays', function() {
+  $(this).addClass('active').siblings().removeClass('active');
+  renderBirthdays('all');
+});
+
+$(document).on('click', '#showUpcomingBirthdays', function() {
+  $(this).addClass('active').siblings().removeClass('active');
+  renderBirthdays('upcoming');
+});
+
+$(document).ready(function() {
+  loadBirthdays();
+  setInterval(loadBirthdays, 3600000);
+});
 </script>

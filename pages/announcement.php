@@ -9,19 +9,6 @@
     --card-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
   }
 
-  body {
-    background-color: #f6f9ff;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    color: #444;
-  }
-
-  /* Breadcrumb & Title */
-  .pagetitle h1 {
-    font-size: 24px;
-    color: var(--text-dark);
-    font-weight: 700;
-  }
-
   /* Stepper */
   .stepper {
     display: flex;
@@ -169,7 +156,7 @@
 </style>
 
 <div class="pagetitle mb-4 pt-3 container-fluid">
-  <h1>Create Announcement</h1>
+  <h1>Announcement</h1>
   <nav>
     <ol class="breadcrumb">
       <li class="breadcrumb-item"><a href="../index.php" class="text-decoration-none text-muted">Home</a></li>
