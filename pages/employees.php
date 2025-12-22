@@ -378,7 +378,7 @@ document.addEventListener("DOMContentLoaded", () => {
     employees.forEach(emp => {
       tbody.innerHTML += `
         <tr>
-          <td><strong>${emp.employee_number}</strong></td>
+          <td>${emp.employee_number}</td>
           <td>${emp.first_name} ${emp.last_name}</td>
           <td>${emp.position}</td>
           <td><span class="badge bg-light text-dark border">${emp.department || '—'}</span></td>

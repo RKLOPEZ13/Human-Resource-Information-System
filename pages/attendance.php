@@ -23,7 +23,7 @@
            <span><span class="badge bg-warning text-dark">L</span> Late</span>
            <span><span class="badge bg-info text-dark">VL</span> Vacation</span>
            <span><span class="badge bg-primary">SL</span> Sick</span>
-           <span><span class="badge bg-secondary">W</span> Weekend</span>
+           <span><span class="badge bg-secondary">W</span> Weekend / Non-Working</span>
            <span class="text-muted small">--</span> Missing Record
        </div>
     </div>
@@ -159,6 +159,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('leaveEnd').addEventListener('change', updateBalanceDisplay);
     document.getElementById('submitLeaveBtn').addEventListener('click', submitLeaveApproval);
 
+    // NEW: Disable Sundays in date pickers
+    disableSundays(document.getElementById('leaveStart'));
+    disableSundays(document.getElementById('leaveEnd'));
+
     startInterval();
 });
 
@@ -169,6 +173,17 @@ function startInterval() {
 function resetInterval() {
     clearInterval(refreshInterval);
     startInterval();
+}
+
+// NEW: Prevent selecting Sundays
+function disableSundays(input) {
+    input.addEventListener('input', function(e) {
+        const date = new Date(this.value);
+        if (date.getDay() === 0) { // Sunday
+            this.value = '';
+            displayAlert('Sundays are fixed non-working days and cannot be included in leave.', 'warning');
+        }
+    });
 }
 
 // Helper to extract employee number from the datalist input string
@@ -188,7 +203,6 @@ function displayAlert(message, type) {
         </div>
     `;
     container.innerHTML = alertHtml;
-    // Auto-dismiss after 5 seconds
     setTimeout(() => {
         const alertEl = container.querySelector('.alert');
         if (alertEl) {
@@ -199,14 +213,12 @@ function displayAlert(message, type) {
 
 // --- MODAL LOGIC ---
 
-// Updates the balance display based on selected employee and leave type
 function updateBalanceDisplay() {
     const empNum = getEmployeeNumberFromInput();
     const leaveType = document.getElementById('leaveTypeSelect').value;
     const balanceDisplay = document.getElementById('balanceDisplay');
     const inputField = document.getElementById('leaveEmpSearch');
     
-    // Update selected employee display
     document.getElementById('selectedEmployeeDisplay').textContent = inputField.value || 'None';
 
     balanceDisplay.innerHTML = '<span class="text-muted">Select employee & type</span>';
@@ -234,7 +246,6 @@ function updateBalanceDisplay() {
     balanceDisplay.innerHTML = message;
 }
 
-// Handles the AJAX submission for HR approval
 function submitLeaveApproval() {
     const form = document.getElementById('leaveApprovalForm');
     if (!form.checkValidity()) {
@@ -271,10 +282,8 @@ function submitLeaveApproval() {
     .then(data => {
         if (data.success) {
             displayAlert(data.message, 'success');
-            // HIDE MODAL ON SUCCESS
             const modal = bootstrap.Modal.getInstance(document.getElementById('markLeaveModal'));
             modal.hide();
-            // Reload grid data immediately
             fetchGridData();
         } else {
             displayAlert(`Approval Failed: ${data.message}`, 'danger');
@@ -302,12 +311,12 @@ function fetchFilters() {
         });
 }
 
-// 2. Fetch Employee List for Modal (and store balances)
+// 2. Fetch Employee List for Modal
 function fetchModalEmployees() {
     fetch('./backend/attendance_data.php?action=get_employees')
         .then(res => res.json())
         .then(data => {
-            employeeData = data.employees; // Store the data
+            employeeData = data.employees;
             const datalist = document.getElementById('employeeDatalist');
             datalist.innerHTML = '';
             employeeData.forEach(e => {
@@ -341,7 +350,6 @@ function fetchGridData() {
         .catch(err => console.error("Error loading attendance:", err));
 }
 
-// Render Table Header (unchanged)
 function renderHeader(days) {
     const headerRow = document.getElementById('tableHeaderRow');
     if(headerRow.children.length === days + 1) return; 
@@ -353,7 +361,6 @@ function renderHeader(days) {
     headerRow.innerHTML = html;
 }
 
-// Render Table Body (unchanged)
 function renderBody(data) {
     const tbody = document.getElementById('attendanceGridBody');
     let html = '';
@@ -380,7 +387,7 @@ function renderBody(data) {
                         ? data.logs[emp.employee_number][d] 
                         : null;
 
-            html += `<td class="att-cell p-1">${getCellContent(log, d, data.year, data.month, isWeekend)}</td>`;
+            html += `<td class="att-cell p-1">${getCellContent(log, d, data.year, data.month)}</td>`;
         }
         html += `</tr>`;
     });
@@ -388,8 +395,7 @@ function renderBody(data) {
     tbody.innerHTML = html;
 }
 
-// RENDER FUNCTION (UPDATED to use 'W' for weekends)
-function getCellContent(log, day, year, month, isWeekend) {
+function getCellContent(log, day, year, month) {
     let status = '-';
     let timeIn = '-';
     let timeOut = '-';
@@ -397,59 +403,59 @@ function getCellContent(log, day, year, month, isWeekend) {
 
     const checkDate = new Date(year, month - 1, day);
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // Normalize today's date
+    today.setHours(0, 0, 0, 0);
+
+    const isSunday = checkDate.getDay() === 0;
+    const isSaturday = checkDate.getDay() === 6;
 
     if (log) {
         status = log.status;
         timeIn = log.time_in || '-';
         timeOut = log.time_out || '-';
         ot = log.overtime_hours || 0;
-    } else if (isWeekend) {
-        // *** CHANGE: Weekend status is now 'W' ***
-        status = 'W'; 
+    } else if (isSunday) {
+        status = 'W'; // Fixed non-working
+    } else if (isSaturday) {
+        status = 'W'; // Optional – no record yet
     } else {
-        // No log and it's a weekday
         if (checkDate < today) {
-            // Past date with no log uses '--' (Missing Record)
-            status = '--'; 
+            status = '--';
         } else {
-            // Date is today or in the future
-            status = '-'; 
+            status = '-';
         }
     }
 
-    // 2. Badges and Labels
     const badges = {
         P: `<i class="bi bi-check-circle-fill text-success fs-5"></i>`,
         A: `<span class="badge bg-danger">A</span>`,
         L: `<span class="badge bg-warning text-dark">L</span>`,
         VL: `<span class="badge bg-info text-dark">VL</span>`,
         SL: `<span class="badge bg-primary">SL</span>`,
-        Emergency: `<span class="badge bg-warning text-dark">EL</span>`, 
-        Maternity: `<span class="badge bg-success">ML</span>`,       
-        Paternity: `<span class="badge bg-success">PL</span>`,       
-        '--': `<small class="text-muted text-opacity-50">--</small>`, 
-        // *** NEW BADGE FOR 'W' ***
+        Emergency: `<span class="badge bg-warning text-dark">EL</span>`,
+        Maternity: `<span class="badge bg-success">ML</span>`,
+        Paternity: `<span class="badge bg-success">PL</span>`,
+        '--': `<small class="text-muted text-opacity-50">--</small>`,
         'W': `<span class="badge bg-secondary">W</span>`,
-        '-': `<small class="text-muted text-opacity-25">-</small>` // Fallback for future/holiday
+        '-': `<small class="text-muted text-opacity-25">-</small>`
     };
 
-    // 3. Popover Content
-    const dateStr = new Date(year, month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const dateStr = checkDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     
     let content = '';
 
     if (status === '--') {
-         content = `<div class="small text-start text-warning"><strong>No Record Found</strong><br>Status is Unknown.</div>`;
+        content = `<div class="small text-start text-warning"><strong>No Record Found</strong><br>Status is Unknown.</div>`;
     } else if (status === 'W') {
-        // *** Popover content for 'W' ***
-        content = `<div class="small text-start text-muted">Weekend</div>`;
+        if (isSunday) {
+            content = `<div class="small text-start text-muted"><strong>Fixed Non-Working Day</strong><br>Sunday – No work allowed</div>`;
+        } else if (isSaturday) {
+            content = `<div class="small text-start text-muted"><strong>Optional Working Day</strong><br>Saturday – No attendance recorded</div>`;
+        }
     } else if (status === '-') {
         content = `<div class="small text-start text-muted">Future Date</div>`;
     } else if (['VL', 'SL', 'Emergency', 'Maternity', 'Paternity'].includes(status)) {
         content = `<div class="small text-start"><strong>Status:</strong> ${getStatusLabel(status)}</div><div class="small mt-1 text-muted">Approved Leave</div>`;
     } else {
-        // Standard attendance content (P, A, L)
         content = `
             <div class="small text-start">
                 <div><strong>Status:</strong> ${getStatusLabel(status)}</div>
@@ -461,7 +467,6 @@ function getCellContent(log, day, year, month, isWeekend) {
             </div>`;
     }
 
-    // Return Cell HTML
     return `<div class="w-100 h-100 d-flex align-items-center justify-content-center"
                  data-bs-toggle="popover" 
                  data-bs-placement="top" 
@@ -470,7 +475,7 @@ function getCellContent(log, day, year, month, isWeekend) {
                  title="${dateStr}" 
                  data-bs-content="${content.replace(/"/g, '&quot;')}">
               ${badges[status] || badges['-']}
-            </div>`;
+            </div>`;    
 }
 
 function getStatusLabel(code) {
@@ -480,14 +485,13 @@ function getStatusLabel(code) {
         'Emergency': 'Emergency Leave',
         'Maternity': 'Maternity Leave',
         'Paternity': 'Paternity Leave',
-        'W': 'Weekend', // New label
+        'W': 'Weekend / Non-Working',
         '-': 'No Log (Future)',
         '--': 'Missing Record'
     };
     return map[code] || code;
 }
 
-// Re-initialize Bootstrap Popovers after DOM update
 function initPopovers() {
     popoverList.forEach(p => p.dispose());
     popoverList = [];

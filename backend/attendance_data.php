@@ -1,5 +1,5 @@
 <?php
-// attendance_data.php (Fixed to use $_SESSION and handle foreign key constraint)
+// attendance_data.php (Updated: Skip Sundays in leave insertion + Saturdays can be overridden)
 session_start(); // START SESSION HERE
 
 require '../config/db.php'; // Includes your $conn object
@@ -146,15 +146,19 @@ if ($action === 'approve_leave') {
         $stmt = $conn->prepare($attSql);
 
         foreach ($period as $date) {
-            $day = $date->format('w');
-            // Skip weekends (0=Sun, 6=Sat)
-            if ($day != 0 && $day != 6) {
-                $dateStr = $date->format('Y-m-d');
-                $note = "HR Approved $leaveType. Reason: $reason";
-                
-                $stmt->bind_param("ssss", $empNum, $dateStr, $attStatus, $note);
-                $stmt->execute();
+            $dayOfWeek = $date->format('w'); // 0 = Sunday, 6 = Saturday
+            
+            // UPDATED: Skip Sundays entirely (fixed non-working day)
+            if ($dayOfWeek == 0) {
+                continue; // Do not insert any record for Sunday
             }
+            
+            // Allow Saturdays and weekdays
+            $dateStr = $date->format('Y-m-d');
+            $note = "HR Approved $leaveType. Reason: $reason";
+            
+            $stmt->bind_param("ssss", $empNum, $dateStr, $attStatus, $note);
+            $stmt->execute();
         }
         $stmt->close();
 
@@ -180,7 +184,7 @@ if ($action === 'approve_leave') {
     exit;
 }
 
-// --- GRID ACTION (Remaing code) ---
+// --- GRID ACTION (Remaining code unchanged) ---
 if ($action === 'grid') {
     // 1. Receive Filters
     $monthStr = $_GET['month'] ?? date('Y-m');
@@ -252,7 +256,7 @@ if ($action === 'grid') {
                WHERE date BETWEEN ? AND ?
                AND employee_number IN ($placeholders)";
     
-    $attTypes = str_repeat('s', count($employeeNumbers) + 2); // 'ss' for start/end date + 's' for each employee number
+    $attTypes = str_repeat('s', count($employeeNumbers) + 2);
     $attParams = array_merge([$startDate, $endDate], $employeeNumbers);
 
     $attStmt = $conn->prepare($attSql);
@@ -261,7 +265,7 @@ if ($action === 'grid') {
     $rawLogs = $attStmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $attStmt->close();
 
-    // Reorganize logs: $logs['EMP001'][5] = {data}
+    // Reorganize logs
     $logs = [];
     foreach ($rawLogs as $log) {
         $logs[$log['employee_number']][$log['day']] = $log;
