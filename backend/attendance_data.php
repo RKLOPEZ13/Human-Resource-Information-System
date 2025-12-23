@@ -1,16 +1,34 @@
 <?php
-// attendance_data.php (Updated: Skip Sundays in leave insertion + Saturdays can be overridden)
-session_start(); // START SESSION HERE
+// attendance_data.php (Final Version: Email Notification + Sunday Skip + Saturday Override)
 
-require '../config/db.php'; // Includes your $conn object
+session_start();
+require '../config/db.php';
+
+// Load PHPMailer
+require_once "PHPMailer/PHPMailer.php";
+require_once "PHPMailer/SMTP.php";
+require_once "PHPMailer/Exception.php";
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
+// Load SMTP settings from .env (same as send_announcement.php)
+if (file_exists(__DIR__ . '/.env')) {
+    foreach (file(__DIR__ . '/.env') as $line) {
+        $line = trim($line);
+        if ($line && strpos($line, '=') !== false && strpos($line, '#') !== 0) {
+            putenv($line);
+        }
+    }
+}
 
 header('Content-Type: application/json');
 
-// --- Helper Function for Working Days Calculation (Approximate) ---
+// --- Helper: Count working days (excludes Sat & Sun) ---
 function get_working_days($startDate, $endDate) {
     $start = new DateTime($startDate);
     $end = new DateTime($endDate);
-    $end->modify('+1 day'); // Include the end date
+    $end->modify('+1 day');
 
     $interval = new DateInterval('P1D');
     $period = new DatePeriod($start, $interval, $end);
@@ -18,8 +36,7 @@ function get_working_days($startDate, $endDate) {
     $days = 0;
     foreach ($period as $date) {
         $day = $date->format('w');
-        // Exclude Saturday (6) and Sunday (0)
-        if ($day != 0 && $day != 6) {
+        if ($day != 0 && $day != 6) { // Exclude Sunday (0) and Saturday (6)
             $days++;
         }
     }
@@ -29,46 +46,38 @@ function get_working_days($startDate, $endDate) {
 $action = $_GET['action'] ?? 'grid';
 
 if ($action === 'get_filters') {
-    // Fetch Departments for the dropdown
     $sql = "SELECT name FROM departments ORDER BY name";
     $result = $conn->query($sql);
-    
     $departments = [];
-    while($row = $result->fetch_assoc()) {
+    while ($row = $result->fetch_assoc()) {
         $departments[] = $row['name'];
     }
-
     echo json_encode(['departments' => $departments]);
     exit;
 }
 
 if ($action === 'get_employees') {
-    // Fetch Employees AND their Leave Balances for the Modal Datalist
     $sql = "SELECT e.employee_number, e.first_name, e.last_name, 
             lb.vacation_leave, lb.sick_leave, lb.emergency_leave, 
             lb.maternity_leave, lb.paternity_leave
             FROM employees e
             LEFT JOIN leave_balances lb ON e.employee_number = lb.employee_number
             WHERE e.status = 'Active'";
-    
     $result = $conn->query($sql);
-    
     $employees = [];
-    while($row = $result->fetch_assoc()) {
+    while ($row = $result->fetch_assoc()) {
         $employees[] = $row;
     }
-    
     echo json_encode(['employees' => $employees]);
     exit;
 }
 
 if ($action === 'approve_leave') {
-    // 1. Input and Validation
-    $empNum = filter_input(INPUT_POST, 'employee_number', FILTER_SANITIZE_STRING);
-    $leaveType = filter_input(INPUT_POST, 'leave_type', FILTER_SANITIZE_STRING);
-    $startDate = filter_input(INPUT_POST, 'start_date', FILTER_SANITIZE_STRING);
-    $endDate = filter_input(INPUT_POST, 'end_date', FILTER_SANITIZE_STRING);
-    $reason = filter_input(INPUT_POST, 'reason', FILTER_SANITIZE_STRING);
+    $empNum     = filter_input(INPUT_POST, 'employee_number', FILTER_SANITIZE_STRING);
+    $leaveType  = filter_input(INPUT_POST, 'leave_type', FILTER_SANITIZE_STRING);
+    $startDate  = filter_input(INPUT_POST, 'start_date', FILTER_SANITIZE_STRING);
+    $endDate    = filter_input(INPUT_POST, 'end_date', FILTER_SANITIZE_STRING);
+    $reason     = filter_input(INPUT_POST, 'reason', FILTER_SANITIZE_STRING);
 
     if (empty($empNum) || empty($leaveType) || empty($startDate) || empty($endDate) || empty($reason)) {
         http_response_code(400);
@@ -76,52 +85,65 @@ if ($action === 'approve_leave') {
         exit;
     }
 
-    // --- FIX: Use session variable for 'approved_by' ---
-    $approvedBy = $_SESSION['employee_number'] ?? NULL;
-    
-    if (is_null($approvedBy)) {
-        http_response_code(401); 
-        echo json_encode(['success' => false, 'message' => "Transaction Failed: HR User (employee_number) not found in session. Please log in."]);
+    $approvedBy = $_SESSION['employee_number'] ?? null;
+    if (!$approvedBy) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'message' => 'Unauthorized: Please log in.']);
         exit;
     }
-    // -----------------------------------------------------------------------
 
-    // Calculate days requested (excluding weekends)
     $daysRequested = get_working_days($startDate, $endDate);
-    
-    $isDeductible = in_array($leaveType, ['VL', 'SL', 'Emergency']);
+    $isDeductible  = in_array($leaveType, ['VL', 'SL', 'Emergency']);
     $balanceColumn = [
-        'VL' => 'vacation_leave', 'SL' => 'sick_leave', 'Emergency' => 'emergency_leave'
+        'VL' => 'vacation_leave',
+        'SL' => 'sick_leave',
+        'Emergency' => 'emergency_leave'
     ][$leaveType] ?? null;
 
-    // Start Transaction
     $conn->begin_transaction();
 
     try {
-        // 2. Balance Check (Only for deductible leaves)
+        // Fetch employee details (name + email)
+        $stmt = $conn->prepare("SELECT first_name, last_name, email FROM employees WHERE employee_number = ?");
+        $stmt->bind_param("s", $empNum);
+        $stmt->execute();
+        $empResult = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$empResult || empty($empResult['email'])) {
+            throw new Exception("Employee not found or missing email address.");
+        }
+
+        $empName  = $empResult['first_name'] . ' ' . $empResult['last_name'];
+        $empEmail = $empResult['email'];
+
+        // Balance check & deduction prep
+        $currentBalance = 0;
+        $newBalance     = 0;
         if ($isDeductible) {
             $stmt = $conn->prepare("SELECT $balanceColumn FROM leave_balances WHERE employee_number = ? FOR UPDATE");
             $stmt->bind_param("s", $empNum);
             $stmt->execute();
-            $result = $stmt->get_result();
-            $currentBalance = $result->fetch_assoc()[$balanceColumn] ?? 0;
+            $res = $stmt->get_result();
+            $currentBalance = $res->fetch_assoc()[$balanceColumn] ?? 0;
             $stmt->close();
 
             if ($currentBalance < $daysRequested) {
-                throw new Exception("Insufficient leave balance ($currentBalance days left) for $daysRequested days requested.");
+                throw new Exception("Insufficient balance: $currentBalance day(s) available.");
             }
+            $newBalance = $currentBalance - $daysRequested;
         }
 
-        // 3. Log into leave_requests table (HR Approved)
-        $reqSql = "INSERT INTO leave_requests (employee_number, leave_type, start_date, end_date, days_requested, reason, status, approved_by, approval_date) 
+        // Insert leave request
+        $reqSql = "INSERT INTO leave_requests 
+                   (employee_number, leave_type, start_date, end_date, days_requested, reason, status, approved_by, approval_date)
                    VALUES (?, ?, ?, ?, ?, ?, 'Approved', ?, NOW())";
-        
         $stmt = $conn->prepare($reqSql);
         $stmt->bind_param("ssssiss", $empNum, $leaveType, $startDate, $endDate, $daysRequested, $reason, $approvedBy);
         $stmt->execute();
         $stmt->close();
-        
-        // 4. Deduct from leave_balances
+
+        // Deduct balance
         if ($isDeductible) {
             $deductSql = "UPDATE leave_balances SET $balanceColumn = $balanceColumn - ? WHERE employee_number = ?";
             $stmt = $conn->prepare($deductSql);
@@ -130,91 +152,139 @@ if ($action === 'approve_leave') {
             $stmt->close();
         }
 
-        // 5. Insert/Update attendance_records for the entire range
+        // Insert attendance records (skip Sundays only)
         $start = new DateTime($startDate);
-        $end = new DateTime($endDate);
-        $end->modify('+1 day'); // Include the end date
+        $end   = new DateTime($endDate);
+        $end->modify('+1 day');
         $interval = new DateInterval('P1D');
-        $period = new DatePeriod($start, $interval, $end);
-        
-        $attStatus = $leaveType; 
-        
-        $attSql = "INSERT INTO attendance_records (employee_number, date, status, time_in, time_out, notes) 
+        $period   = new DatePeriod($start, $interval, $end);
+
+        $attSql = "INSERT INTO attendance_records (employee_number, date, status, time_in, time_out, notes)
                    VALUES (?, ?, ?, NULL, NULL, ?)
                    ON DUPLICATE KEY UPDATE status = VALUES(status), time_in = NULL, time_out = NULL, notes = VALUES(notes)";
-                   
         $stmt = $conn->prepare($attSql);
 
         foreach ($period as $date) {
-            $dayOfWeek = $date->format('w'); // 0 = Sunday, 6 = Saturday
-            
-            // UPDATED: Skip Sundays entirely (fixed non-working day)
-            if ($dayOfWeek == 0) {
-                continue; // Do not insert any record for Sunday
-            }
-            
-            // Allow Saturdays and weekdays
+            if ($date->format('w') == 0) continue; // Skip Sunday
+
             $dateStr = $date->format('Y-m-d');
-            $note = "HR Approved $leaveType. Reason: $reason";
-            
-            $stmt->bind_param("ssss", $empNum, $dateStr, $attStatus, $note);
+            $note    = "HR Approved $leaveType. Reason: $reason";
+
+            $stmt->bind_param("ssss", $empNum, $dateStr, $leaveType, $note);
             $stmt->execute();
         }
         $stmt->close();
 
-        // 6. Update employee status to 'On Leave' if leave duration is current/future
+        // Update employee status
         $today = date('Y-m-d');
         if ($endDate >= $today) {
-             $empStatusSql = "UPDATE employees SET status = 'On Leave' WHERE employee_number = ?";
-             $stmt = $conn->prepare($empStatusSql);
-             $stmt->bind_param("s", $empNum);
-             $stmt->execute();
-             $stmt->close();
+            $stmt = $conn->prepare("UPDATE employees SET status = 'On Leave' WHERE employee_number = ?");
+            $stmt->bind_param("s", $empNum);
+            $stmt->execute();
+            $stmt->close();
         }
 
-        // Commit transaction
         $conn->commit();
-        echo json_encode(['success' => true, 'message' => "Leave approved and set successfully for $daysRequested working days."]);
+
+        // === SEND EMAIL NOTIFICATION ===
+        $leaveNames = [
+            'VL' => 'Vacation Leave',
+            'SL' => 'Sick Leave',
+            'Emergency' => 'Emergency Leave',
+            'Maternity' => 'Maternity Leave',
+            'Paternity' => 'Paternity Leave'
+        ];
+        $leaveName = $leaveNames[$leaveType] ?? $leaveType;
+
+        $balanceText = $isDeductible
+            ? "<strong>Remaining {$leaveName}: {$newBalance} day(s)</strong>"
+            : "<em>No deduction – Fixed entitlement</em>";
+
+        $mail = new PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = getenv('SMTP_HOST');
+            $mail->SMTPAuth   = true;
+            $mail->Username   = getenv('SMTP_USER');
+            $mail->Password   = getenv('SMTP_PASS');
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->Port       = getenv('SMTP_PORT');
+
+            $mail->setFrom(getenv('SMTP_USER'), 'HR Department');
+            $mail->addAddress($empEmail, $empName);
+            $mail->isHTML(true);
+            $mail->Subject = "Your {$leaveName} has been APPROVED";
+
+            $mail->Body = "
+                <div style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+                    <h2 style='color: #2c7be5;'>Leave Request Approved</h2>
+                    <p>Dear <strong>{$empName}</strong>,</p>
+                    <p>Your leave request has been <strong style='color: green;'>APPROVED</strong>.</p>
+
+                    <ul>
+                        <li><strong>Type:</strong> {$leaveName}</li>
+                        <li><strong>From:</strong> " . date('F j, Y', strtotime($startDate)) . "</li>
+                        <li><strong>To:</strong> " . date('F j, Y', strtotime($endDate)) . "</li>
+                        <li><strong>Working Days Approved:</strong> {$daysRequested}</li>
+                    </ul>
+
+                    <p><strong>Reason:</strong><br><em>{$reason}</em></p>
+
+                    <hr style='border: 1px solid #eee;'>
+                    <p>{$balanceText}</p>
+
+                    <p>Thank you.<br><strong>HR Department</strong></p>
+                </div>
+            ";
+
+            $mail->send();
+            $emailStatus = "Email sent successfully to {$empName}";
+        } catch (Exception $e) {
+            $emailStatus = "Leave approved, but email failed: " . $mail->ErrorInfo;
+        }
+
+        echo json_encode([
+            'success'        => true,
+            'message'        => "Leave approved and set for {$daysRequested} working day(s).",
+            'email_status'   => $emailStatus,
+            'employee_name'  => $empName
+        ]);
 
     } catch (Exception $e) {
         $conn->rollback();
         http_response_code(500);
-        echo json_encode(['success' => false, 'message' => "Transaction Failed: " . $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => 'Transaction Failed: ' . $e->getMessage()]);
     }
     exit;
 }
 
-// --- GRID ACTION (Remaining code unchanged) ---
+// --- GRID ACTION (unchanged) ---
 if ($action === 'grid') {
-    // 1. Receive Filters
-    $monthStr = $_GET['month'] ?? date('Y-m');
+    $monthStr   = $_GET['month'] ?? date('Y-m');
     $deptFilter = $_GET['dept'] ?? '';
-    $search = $_GET['search'] ?? '';
+    $search     = $_GET['search'] ?? '';
 
-    // Calculate Date Range
-    $startDate = $monthStr . '-01';
-    $endDate = date('Y-m-t', strtotime($startDate));
+    $startDate   = $monthStr . '-01';
+    $endDate     = date('Y-m-t', strtotime($startDate));
     $daysInMonth = (int)date('t', strtotime($startDate));
-    $year = (int)date('Y', strtotime($startDate));
-    $month = (int)date('m', strtotime($startDate));
+    $year        = (int)date('Y', strtotime($startDate));
+    $month       = (int)date('m', strtotime($startDate));
 
-    // 2. Build Employee Query
     $sql = "SELECT e.employee_number, e.first_name, e.last_name, e.position, d.name as dept_name
             FROM employees e
             LEFT JOIN departments d ON e.department_id = d.id
             WHERE 1=1";
-    
-    $types = "";
+
+    $types  = "";
     $params = [];
 
     if (!empty($deptFilter)) {
-        $sql .= " AND d.name = ?";
+        $sql   .= " AND d.name = ?";
         $types .= "s";
         $params[] = $deptFilter;
     }
-
     if (!empty($search)) {
-        $sql .= " AND (e.first_name LIKE ? OR e.last_name LIKE ?)";
+        $sql   .= " AND (e.first_name LIKE ? OR e.last_name LIKE ?)";
         $types .= "ss";
         $params[] = "%$search%";
         $params[] = "%$search%";
@@ -222,32 +292,29 @@ if ($action === 'grid') {
 
     $sql .= " ORDER BY e.last_name ASC";
 
-    // Prepare and execute employee statement
     $stmt = $conn->prepare($sql);
     if (!empty($types)) {
         $stmt->bind_param($types, ...$params);
     }
     $stmt->execute();
-    $result = $stmt->get_result();
+    $result    = $stmt->get_result();
     $employees = $result->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
-    
-    // Get list of employee numbers for the next query
+
     $employeeNumbers = array_column($employees, 'employee_number');
-    $placeholders = implode(',', array_fill(0, count($employeeNumbers), '?'));
-    
-    // 3. Build Attendance Data Dictionary
+    $placeholders    = $employeeNumbers ? implode(',', array_fill(0, count($employeeNumbers), '?')) : '';
+
     if (empty($employeeNumbers)) {
         echo json_encode([
             'days_in_month' => $daysInMonth,
-            'year' => $year,
-            'month' => $month,
-            'employees' => [],
-            'logs' => []
+            'year'          => $year,
+            'month'         => $month,
+            'employees'     => [],
+            'logs'          => []
         ]);
         exit;
     }
-    
+
     $attSql = "SELECT employee_number, DAY(date) as day, status, 
                TIME_FORMAT(time_in, '%H:%i') as time_in, 
                TIME_FORMAT(time_out, '%H:%i') as time_out,
@@ -255,8 +322,8 @@ if ($action === 'grid') {
                FROM attendance_records 
                WHERE date BETWEEN ? AND ?
                AND employee_number IN ($placeholders)";
-    
-    $attTypes = str_repeat('s', count($employeeNumbers) + 2);
+
+    $attTypes  = str_repeat('s', count($employeeNumbers) + 2);
     $attParams = array_merge([$startDate, $endDate], $employeeNumbers);
 
     $attStmt = $conn->prepare($attSql);
@@ -265,19 +332,17 @@ if ($action === 'grid') {
     $rawLogs = $attStmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $attStmt->close();
 
-    // Reorganize logs
     $logs = [];
     foreach ($rawLogs as $log) {
         $logs[$log['employee_number']][$log['day']] = $log;
     }
 
-    // 4. Return Combined Data
     echo json_encode([
         'days_in_month' => $daysInMonth,
-        'year' => $year,
-        'month' => $month,
-        'employees' => $employees,
-        'logs' => $logs
+        'year'          => $year,
+        'month'         => $month,
+        'employees'     => $employees,
+        'logs'          => $logs
     ]);
     exit;
 }

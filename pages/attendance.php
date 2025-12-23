@@ -281,7 +281,17 @@ function submitLeaveApproval() {
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            displayAlert(data.message, 'success');
+            const empName = data.employee_name || 'Employee';
+            const mainMsg = data.message;
+            const emailMsg = data.email_status?.includes('successfully')
+                ? `<strong>Email sent</strong> to <strong>${empName}</strong>`
+                : `<em>Email failed</em> (but leave was approved)`;
+
+            displayAlert(`
+                <strong>${mainMsg}</strong><br>
+                <small class="text-success">${emailMsg}</small>
+            `, 'success');
+
             const modal = bootstrap.Modal.getInstance(document.getElementById('markLeaveModal'));
             modal.hide();
             fetchGridData();
@@ -290,8 +300,8 @@ function submitLeaveApproval() {
         }
     })
     .catch(error => {
-        console.error('Submission error:', error);
-        displayAlert('An unexpected error occurred during submission.', 'danger');
+        console.error('Error:', error);
+        displayAlert('An unexpected error occurred.', 'danger');
     })
     .finally(() => {
         document.getElementById('submitLeaveBtn').disabled = false;
