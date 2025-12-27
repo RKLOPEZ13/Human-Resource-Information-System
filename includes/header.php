@@ -29,6 +29,21 @@
 
     <!-- Template Main CSS File -->
     <link href="assets/css/style.css" rel="stylesheet">
+    <style>
+      /* Custom Badge Colors for Leave Types */
+      .badge.bg-orange {
+          background-color: #fd7e14 !important;
+          color: #fff !important;
+      }
+      .badge.bg-pink {
+          background-color: #e83e8c !important;
+          color: #fff !important;
+      }
+      .badge.bg-teal {
+          background-color: #20c997 !important;
+          color: #fff !important;
+      }
+    </style>
   </head>
 
   <body><!-- ======= Header ======= -->

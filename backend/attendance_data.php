@@ -1,5 +1,5 @@
 <?php
-// attendance_data.php (Final Version: Email Notification + Sunday Skip + Saturday Override)
+// attendance_data.php (FINAL VERSION - All Bugs Fixed - Dec 27, 2025)
 
 session_start();
 require '../config/db.php';
@@ -12,7 +12,7 @@ require_once "PHPMailer/Exception.php";
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-// Load SMTP settings from .env (same as send_announcement.php)
+// Load SMTP settings from .env
 if (file_exists(__DIR__ . '/.env')) {
     foreach (file(__DIR__ . '/.env') as $line) {
         $line = trim($line);
@@ -24,11 +24,10 @@ if (file_exists(__DIR__ . '/.env')) {
 
 header('Content-Type: application/json');
 
-// --- Helper: Count working days (excludes Sat & Sun) ---
 function get_working_days($startDate, $endDate) {
     $start = new DateTime($startDate);
     $end = new DateTime($endDate);
-    $end->modify('+1 day');
+    $end->modify('+1 day');  // Make end exclusive
 
     $interval = new DateInterval('P1D');
     $period = new DatePeriod($start, $interval, $end);
@@ -36,7 +35,7 @@ function get_working_days($startDate, $endDate) {
     $days = 0;
     foreach ($period as $date) {
         $day = $date->format('w');
-        if ($day != 0 && $day != 6) { // Exclude Sunday (0) and Saturday (6)
+        if ($day != 0) {  // Exclude ONLY Sunday (0)
             $days++;
         }
     }
@@ -58,8 +57,11 @@ if ($action === 'get_filters') {
 
 if ($action === 'get_employees') {
     $sql = "SELECT e.employee_number, e.first_name, e.last_name, 
-            lb.vacation_leave, lb.sick_leave, lb.emergency_leave, 
-            lb.maternity_leave, lb.paternity_leave
+            COALESCE(lb.vacation_leave, 15) as vacation_leave,
+            COALESCE(lb.sick_leave, 10) as sick_leave,
+            COALESCE(lb.emergency_leave, 5) as emergency_leave,
+            COALESCE(lb.maternity_leave, 105) as maternity_leave,
+            COALESCE(lb.paternity_leave, 15) as paternity_leave
             FROM employees e
             LEFT JOIN leave_balances lb ON e.employee_number = lb.employee_number
             WHERE e.status = 'Active'";
@@ -94,16 +96,11 @@ if ($action === 'approve_leave') {
 
     $daysRequested = get_working_days($startDate, $endDate);
     $isDeductible  = in_array($leaveType, ['VL', 'SL', 'Emergency']);
-    $balanceColumn = [
-        'VL' => 'vacation_leave',
-        'SL' => 'sick_leave',
-        'Emergency' => 'emergency_leave'
-    ][$leaveType] ?? null;
 
     $conn->begin_transaction();
 
     try {
-        // Fetch employee details (name + email)
+        // Fetch employee details
         $stmt = $conn->prepare("SELECT first_name, last_name, email FROM employees WHERE employee_number = ?");
         $stmt->bind_param("s", $empNum);
         $stmt->execute();
@@ -120,21 +117,54 @@ if ($action === 'approve_leave') {
         // Balance check & deduction prep
         $currentBalance = 0;
         $newBalance     = 0;
+        $balanceColumn  = null;
+
         if ($isDeductible) {
+            $map = [
+                'VL' => 'vacation_leave',
+                'SL' => 'sick_leave',
+                'Emergency' => 'emergency_leave'
+            ];
+            $balanceColumn = $map[$leaveType] ?? null;
+
+            if (!$balanceColumn) {
+                throw new Exception("Invalid deductible leave type.");
+            }
+
             $stmt = $conn->prepare("SELECT $balanceColumn FROM leave_balances WHERE employee_number = ? FOR UPDATE");
             $stmt->bind_param("s", $empNum);
             $stmt->execute();
             $res = $stmt->get_result();
-            $currentBalance = $res->fetch_assoc()[$balanceColumn] ?? 0;
+            $row = $res->fetch_assoc();
+            $currentBalance = $row[$balanceColumn] ?? 0;
             $stmt->close();
 
             if ($currentBalance < $daysRequested) {
-                throw new Exception("Insufficient balance: $currentBalance day(s) available.");
+                throw new Exception("Insufficient balance: Only {$currentBalance} day(s) available for {$leaveType}.");
             }
+
             $newBalance = $currentBalance - $daysRequested;
         }
 
-        // Insert leave request
+        // === CONFLICT CHECK ===
+        $conflictStmt = $conn->prepare("
+            SELECT date, status 
+            FROM attendance_records 
+            WHERE employee_number = ? 
+              AND date BETWEEN ? AND ?
+              AND status IN ('P', 'A', 'L', 'VL', 'SL', 'Emergency', 'Maternity', 'Paternity')
+        ");
+        $conflictStmt->bind_param("sss", $empNum, $startDate, $endDate);
+        $conflictStmt->execute();
+        $conflicts = $conflictStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $conflictStmt->close();
+
+        if (!empty($conflicts)) {
+            $conflictList = array_map(fn($c) => $c['date'] . " (" . $c['status'] . ")", $conflicts);
+            throw new Exception("Cannot approve leave: Conflict on date(s): " . implode(', ', $conflictList));
+        }
+
+        // Insert into leave_requests
         $reqSql = "INSERT INTO leave_requests 
                    (employee_number, leave_type, start_date, end_date, days_requested, reason, status, approved_by, approval_date)
                    VALUES (?, ?, ?, ?, ?, ?, 'Approved', ?, NOW())";
@@ -144,7 +174,7 @@ if ($action === 'approve_leave') {
         $stmt->close();
 
         // Deduct balance
-        if ($isDeductible) {
+        if ($isDeductible && $balanceColumn) {
             $deductSql = "UPDATE leave_balances SET $balanceColumn = $balanceColumn - ? WHERE employee_number = ?";
             $stmt = $conn->prepare($deductSql);
             $stmt->bind_param("is", $daysRequested, $empNum);
@@ -152,32 +182,36 @@ if ($action === 'approve_leave') {
             $stmt->close();
         }
 
-        // Insert attendance records (skip Sundays only)
+        // === INSERT INTO ATTENDANCE_RECORDS (Skip Sundays only) ===
         $start = new DateTime($startDate);
         $end   = new DateTime($endDate);
         $end->modify('+1 day');
         $interval = new DateInterval('P1D');
         $period   = new DatePeriod($start, $interval, $end);
 
-        $attSql = "INSERT INTO attendance_records (employee_number, date, status, time_in, time_out, notes)
-                   VALUES (?, ?, ?, NULL, NULL, ?)
-                   ON DUPLICATE KEY UPDATE status = VALUES(status), time_in = NULL, time_out = NULL, notes = VALUES(notes)";
-        $stmt = $conn->prepare($attSql);
+        $attSql = "INSERT INTO attendance_records (employee_number, date, status, notes)
+                   VALUES (?, ?, ?, ?)
+                   ON DUPLICATE KEY UPDATE 
+                       status = VALUES(status),
+                       notes = VALUES(notes),
+                       time_in = NULL,
+                       time_out = NULL";
+        $attStmt = $conn->prepare($attSql);
 
         foreach ($period as $date) {
             if ($date->format('w') == 0) continue; // Skip Sunday
 
             $dateStr = $date->format('Y-m-d');
-            $note    = "HR Approved $leaveType. Reason: $reason";
+            $note    = "HR Approved $leaveType: $reason";
 
-            $stmt->bind_param("ssss", $empNum, $dateStr, $leaveType, $note);
-            $stmt->execute();
+            $attStmt->bind_param("ssss", $empNum, $dateStr, $leaveType, $note);
+            $attStmt->execute();
         }
-        $stmt->close();
+        $attStmt->close();
 
         // Update employee status
         $today = date('Y-m-d');
-        if ($endDate >= $today) {
+        if ($startDate <= $today && $endDate >= $today) {
             $stmt = $conn->prepare("UPDATE employees SET status = 'On Leave' WHERE employee_number = ?");
             $stmt->bind_param("s", $empNum);
             $stmt->execute();
@@ -186,7 +220,7 @@ if ($action === 'approve_leave') {
 
         $conn->commit();
 
-        // === SEND EMAIL NOTIFICATION ===
+        // === SEND EMAIL ===
         $leaveNames = [
             'VL' => 'Vacation Leave',
             'SL' => 'Sick Leave',
@@ -253,12 +287,12 @@ if ($action === 'approve_leave') {
     } catch (Exception $e) {
         $conn->rollback();
         http_response_code(500);
-        echo json_encode(['success' => false, 'message' => 'Transaction Failed: ' . $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
     exit;
 }
 
-// --- GRID ACTION (unchanged) ---
+// --- GRID ACTION ---
 if ($action === 'grid') {
     $monthStr   = $_GET['month'] ?? date('Y-m');
     $deptFilter = $_GET['dept'] ?? '';

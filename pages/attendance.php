@@ -17,15 +17,18 @@
            <small class="text-muted">Hover over cells for time logs (Auto-refreshes every 5s)</small>
        </div>
        
-       <div class="d-flex gap-3 small align-items-center bg-light p-2 rounded">
-           <span><span class="badge bg-success">P</span> Present</span>
-           <span><span class="badge bg-danger">A</span> Absent</span>
-           <span><span class="badge bg-warning text-dark">L</span> Late</span>
-           <span><span class="badge bg-info text-dark">VL</span> Vacation</span>
-           <span><span class="badge bg-primary">SL</span> Sick</span>
-           <span><span class="badge bg-secondary">W</span> Weekend / Non-Working</span>
-           <span class="text-muted small">--</span> Missing Record
-       </div>
+        <div class="d-flex gap-3 small align-items-center bg-light p-2 rounded flex-wrap">
+            <span><span class="badge bg-success">P</span> Present</span>
+            <span><span class="badge bg-danger">A</span> Absent</span>
+            <span><span class="badge bg-warning text-dark">L</span> Late</span>
+            <span><span class="badge bg-info text-dark">VL</span> Vacation Leave</span>
+            <span><span class="badge bg-primary">SL</span> Sick Leave</span>
+            <span><span class="badge bg-orange text-dark">EL</span> Emergency Leave</span>
+            <span><span class="badge bg-pink text-white">ML</span> Maternity Leave</span>
+            <span><span class="badge bg-teal text-white">PL</span> Paternity Leave</span>
+            <span><span class="badge bg-secondary">W</span> Weekend / Non-Working</span>
+            <span class="text-muted small">--</span> Missing Record
+        </div>
     </div>
 
     <div class="row g-2 mb-3 align-items-center">
@@ -90,9 +93,9 @@
                 <option value="">Choose type...</option>
                 <option value="VL">Vacation Leave (VL)</option>
                 <option value="SL">Sick Leave (SL)</option>
-                <option value="Emergency">Emergency Leave</option>
-                <option value="Maternity">Maternity Leave (Fixed)</option>
-                <option value="Paternity">Paternity Leave (Fixed)</option>
+                <option value="Emergency">Emergency Leave (EL)</option>
+                <option value="Maternity">Maternity Leave (ML)</option>
+                <option value="Paternity">Paternity Leave (PL)</option>
               </select>
             </div>
 
@@ -131,7 +134,7 @@
 // State Management
 let refreshInterval;
 let popoverList = [];
-let employeeData = []; // Global store for employee details and balances
+let employeeData = []; // Global store for employee details and balances (will be refreshed after approval)
 
 // Initialization
 document.addEventListener('DOMContentLoaded', () => {
@@ -144,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('leaveEnd').min = todayStr;
 
     fetchFilters();
-    fetchModalEmployees();
+    fetchModalEmployees(); // Initial load
     fetchGridData();
 
     // Event Listeners for Grid Filters
@@ -159,7 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('leaveEnd').addEventListener('change', updateBalanceDisplay);
     document.getElementById('submitLeaveBtn').addEventListener('click', submitLeaveApproval);
 
-    // NEW: Disable Sundays in date pickers
+    // Disable Sundays in date pickers
     disableSundays(document.getElementById('leaveStart'));
     disableSundays(document.getElementById('leaveEnd'));
 
@@ -175,7 +178,6 @@ function resetInterval() {
     startInterval();
 }
 
-// NEW: Prevent selecting Sundays
 function disableSundays(input) {
     input.addEventListener('input', function(e) {
         const date = new Date(this.value);
@@ -208,7 +210,7 @@ function displayAlert(message, type) {
         if (alertEl) {
             bootstrap.Alert.getOrCreateInstance(alertEl).close();
         }
-    }, 5000);
+    }, 7000);
 }
 
 // --- MODAL LOGIC ---
@@ -228,22 +230,19 @@ function updateBalanceDisplay() {
     const employee = employeeData.find(e => e.employee_number === empNum);
     if (!employee) return;
 
-    let balanceKey;
-    let message = '';
-
+    let balanceKey = '';
     if (leaveType === 'VL') balanceKey = 'vacation_leave';
     else if (leaveType === 'SL') balanceKey = 'sick_leave';
     else if (leaveType === 'Emergency') balanceKey = 'emergency_leave';
-    
-    if (balanceKey) {
-        message = `<span class="fw-bold">${employee[balanceKey] || 0} days remaining</span>`;
-    } else if (['Maternity', 'Paternity'].includes(leaveType)) {
-        message = `Fixed entitlement. No balance deduction required.`;
-    } else {
-        message = '<span class="text-danger">Invalid Leave Type.</span>';
-    }
+    else if (leaveType === 'Maternity') balanceKey = 'maternity_leave';
+    else if (leaveType === 'Paternity') balanceKey = 'paternity_leave';
 
-    balanceDisplay.innerHTML = message;
+    if (balanceKey) {
+        const remaining = employee[balanceKey] || 0;
+        balanceDisplay.innerHTML = `<span class="fw-bold">${remaining} day(s) remaining</span>`;
+    } else {
+        balanceDisplay.innerHTML = '<span class="text-danger">Invalid leave type</span>';
+    }
 }
 
 function submitLeaveApproval() {
@@ -289,11 +288,17 @@ function submitLeaveApproval() {
 
             displayAlert(`
                 <strong>${mainMsg}</strong><br>
-                <small class="text-success">${emailMsg}</small>
+                <small class="text-success">${emailMsg}</small><br>
+                <small class="text-info fw-bold">Leave balances have been updated and refreshed.</small>
             `, 'success');
 
             const modal = bootstrap.Modal.getInstance(document.getElementById('markLeaveModal'));
             modal.hide();
+
+            // CRITICAL FIX: Refresh employee balances from database
+            fetchModalEmployees();
+
+            // Refresh grid to show new leave entries
             fetchGridData();
         } else {
             displayAlert(`Approval Failed: ${data.message}`, 'danger');
@@ -321,12 +326,12 @@ function fetchFilters() {
         });
 }
 
-// 2. Fetch Employee List for Modal
+// 2. Fetch Employee List for Modal (with current balances)
 function fetchModalEmployees() {
     fetch('./backend/attendance_data.php?action=get_employees')
         .then(res => res.json())
         .then(data => {
-            employeeData = data.employees;
+            employeeData = data.employees; // Update global cache with fresh data
             const datalist = document.getElementById('employeeDatalist');
             datalist.innerHTML = '';
             employeeData.forEach(e => {
@@ -334,7 +339,11 @@ function fetchModalEmployees() {
                 opt.value = `${e.first_name} ${e.last_name} (${e.employee_number})`;
                 datalist.appendChild(opt);
             });
-        });
+
+            // If modal is open, update balance display immediately
+            updateBalanceDisplay();
+        })
+        .catch(err => console.error('Failed to refresh employee balances:', err));
 }
 
 // 3. Main Data Fetcher (Grid)
@@ -424,9 +433,9 @@ function getCellContent(log, day, year, month) {
         timeOut = log.time_out || '-';
         ot = log.overtime_hours || 0;
     } else if (isSunday) {
-        status = 'W'; // Fixed non-working
+        status = 'W';
     } else if (isSaturday) {
-        status = 'W'; // Optional – no record yet
+        status = 'W';
     } else {
         if (checkDate < today) {
             status = '--';
@@ -441,9 +450,9 @@ function getCellContent(log, day, year, month) {
         L: `<span class="badge bg-warning text-dark">L</span>`,
         VL: `<span class="badge bg-info text-dark">VL</span>`,
         SL: `<span class="badge bg-primary">SL</span>`,
-        Emergency: `<span class="badge bg-warning text-dark">EL</span>`,
-        Maternity: `<span class="badge bg-success">ML</span>`,
-        Paternity: `<span class="badge bg-success">PL</span>`,
+        Emergency: `<span class="badge bg-orange text-dark">EL</span>`,    
+        Maternity: `<span class="badge bg-pink text-white">ML</span>`,     
+        Paternity: `<span class="badge bg-teal text-white">PL</span>`,      
         '--': `<small class="text-muted text-opacity-50">--</small>`,
         'W': `<span class="badge bg-secondary">W</span>`,
         '-': `<small class="text-muted text-opacity-25">-</small>`
@@ -511,4 +520,19 @@ function initPopovers() {
         return new bootstrap.Popover(popoverTriggerEl);
     });
 }
+
+document.getElementById('exportBtn').addEventListener('click', function() {
+    const month = document.getElementById('monthFilter').value || new Date().toISOString().slice(0,7);
+    const dept = document.getElementById('deptFilter').value || '';
+    const search = document.getElementById('searchEmp').value || '';
+
+    const params = new URLSearchParams({
+        month: month,
+        dept: dept,
+        search: search
+    });
+
+    const url = `./backend/export_attendance_excel.php?${params.toString()}`;
+    window.location.href = url; 
+});
 </script>
