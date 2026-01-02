@@ -17,9 +17,6 @@
         <button class="btn btn-primary me-2" id="addEmployeeBtn">
           Add Employee
         </button>
-        <button class="btn btn-outline-success" id="exportBtn">
-          Export List
-        </button>
       </div>
 
       <div class="d-flex gap-2">
@@ -502,28 +499,6 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('employeeFormTitle').textContent = "Add New Employee";
     document.getElementById('empId').value = "";
     new bootstrap.Modal('#employeeFormModal').show();
-  });
-
-  document.getElementById('exportBtn')?.addEventListener('click', () => {
-    // Your export logic here (same as before)
-    const departmentFilter = document.getElementById('departmentFilter')?.value || '';
-    const searchTerm = (document.getElementById('searchEmployee')?.value || '').toLowerCase();
-    let employeesToExport = allEmployees;
-
-    if (departmentFilter !== "") {
-      employeesToExport = employeesToExport.filter(emp => emp.department === departmentFilter);
-    }
-
-    if (searchTerm.length > 0) {
-      employeesToExport = employeesToExport.filter(emp => {
-        const fullName = `${emp.first_name} ${emp.last_name}`.toLowerCase();
-        const position = (emp.position || '').toLowerCase();
-        const email = (emp.email || '').toLowerCase();
-        return fullName.includes(searchTerm) || position.includes(searchTerm) || email.includes(searchTerm);
-      });
-    }
-
-    exportToCsv('employee_roster.csv', employeesToExport);
   });
 
   // Initial load
