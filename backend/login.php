@@ -29,6 +29,8 @@ if ($result->num_rows !== 1) {
 $user = $result->fetch_assoc();
 
 if (!password_verify($password, $user['password_hash'])) {
+    session_unset();   
+    session_destroy();
     echo "<script>alert('Incorrect password'); window.location.href='../index.php';</script>";
     exit;
 }
