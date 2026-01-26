@@ -1,7 +1,5 @@
--- HR MANAGEMENT SYSTEM - FINAL CLEAN & PROFESSIONAL SCHEMA
--- Uses employee_number as the ONLY employee identifier across ALL tables
--- Fresh system: only departments, employees, leave balances, users have data
-
+-- HR MANAGEMENT SYSTEM DATABASE SCHEMA
+-- ============================================================
 DROP DATABASE IF EXISTS hr_management_system;
 CREATE DATABASE hr_management_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE hr_management_system;
@@ -160,43 +158,3 @@ CREATE TABLE user_settings (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ============================================================
--- INSERT ONLY REQUIRED DATA (as instructed)
--- ============================================================
-
--- Departments
-INSERT INTO departments (name, description) VALUES
-('IT', 'Information Technology Department'),
-('Human Resources', 'Human Resources Department'),
-('Finance', 'Finance and Accounting Department'),
-('Sales', 'Sales Department'),
-('Marketing', 'Marketing Department'),
-('Engineering', 'Engineering Department'),
-('Operations', 'Operations Department'),
-('Customer Support', 'Customer Support Department');
-
--- Employees
-INSERT INTO employees (
-    employee_number, first_name, last_name, email, phone, emergency_contact, address,
-    department_id, position, manager_number, employment_type, location, status, date_hired, age, base_salary
-) VALUES
-('EMP1001', 'Jane',    'Smith',    'jane.smith@company.com',    '+63 912 345 6789', 'John Smith - 0917xxx', 'Manila', 2, 'HR Manager',        NULL,     'Full-Time', 'Headquarters', 'Active', '2022-05-20', 35, 75000.00),
-('EMP1002', 'John',    'Doe',      'john.doe@company.com',      '+63 917 123 4567', 'Mary Doe',           'Quezon City', 6, 'Software Engineer', 'EMP1001', 'Full-Time', 'Headquarters', 'Active', '2023-01-15', 29, 85000.00),
-('EMP1003', 'Maria',   'Santos',   'maria.santos@company.com',  '+63 918 234 5678', 'Pedro Santos',       'Makati', 2, 'HR Specialist',     'EMP1001', 'Full-Time', 'Headquarters', 'Active', '2023-03-10', 27, 48000.00),
-('EMP1004', 'Pedro',   'Reyes',    'pedro.reyes@company.com',   '+63 919 345 6789', 'Ana Reyes',          'Remote', 3, 'Accountant',        'EMP1001', 'Full-Time', 'Remote',       'Active', '2022-11-01', 32, 62000.00),
-('EMP1005', 'Sarah',   'Connor',   'sarah.connor@company.com',  '+63 927 456 7890', 'Kyle Reese',         'Cebu',   4, 'Sales Executive',   'EMP1001', 'Full-Time', 'Branch Office','Active', '2024-02-01', 31, 65000.00),
-('EMP1006', 'Mark',    'Lee',      'mark.lee@company.com',      '+63 928 567 8901', 'Alice Lee',          'Pasig',  1, 'Web Developer',     'EMP1002', 'Full-Time', 'Headquarters', 'Active', '2023-08-15', 26, 58000.00);
-
--- Full Fresh Leave Credits for ALL employees
-INSERT INTO leave_balances (employee_number, vacation_leave, sick_leave, emergency_leave, maternity_leave, paternity_leave)
-SELECT employee_number, 15, 10, 5, 105, 15 FROM employees;
-
--- Users (HR Admin + 1 regular user)
-INSERT INTO users (employee_number, username, password_hash, role) VALUES
-('EMP1001', 'janesmith', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'HR'),      -- password: password
-('EMP1002', 'johndoe',   '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Employee'); -- password: password
-
--- ============================================================
--- DONE! Clean, complete, consistent, and ready for biometric page
--- ============================================================
