@@ -501,6 +501,100 @@ document.addEventListener("DOMContentLoaded", () => {
     new bootstrap.Modal('#employeeFormModal').show();
   });
 
+  // ---------------------------------------------------------
+  // SAVE EMPLOYEE AJAX (Create & Update)
+  // ---------------------------------------------------------
+  document.getElementById('saveEmployeeBtn').addEventListener('click', async function() {
+    const btn = this;
+    
+    // 1. Basic Client-side Validation
+    const requiredIds = ['firstName', 'lastName', 'empEmail', 'empDept', 'empPosition'];
+    let isValid = true;
+    requiredIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el.value.trim()) {
+            el.classList.add('is-invalid');
+            isValid = false;
+        } else {
+            el.classList.remove('is-invalid');
+        }
+    });
+
+    if (!isValid) {
+        alert("Please fill in all required fields.");
+        return;
+    }
+
+    // 2. Prepare Data (Manual mapping because inputs lack 'name' attributes)
+    const formData = new FormData();
+    
+    // Primary Key (Empty for new, Value for edit)
+    formData.append('emp_number', document.getElementById('empId').value);
+
+    // Personal Info
+    formData.append('first_name', document.getElementById('firstName').value);
+    formData.append('last_name', document.getElementById('lastName').value);
+    formData.append('age', document.getElementById('empAge').value);
+    formData.append('email', document.getElementById('empEmail').value);
+    formData.append('phone', document.getElementById('empPhone').value);
+    formData.append('address', document.getElementById('empAddress').value);
+    formData.append('emergency_contact', document.getElementById('empEmergency').value);
+
+    // Employment Details
+    formData.append('department', document.getElementById('empDept').value);
+    formData.append('position', document.getElementById('empPosition').value);
+    formData.append('manager_id', document.getElementById('empManager').value);
+    formData.append('employment_type', document.getElementById('empType').value);
+    formData.append('location', document.getElementById('empLocation').value);
+    formData.append('status', document.getElementById('empStatus').value);
+    
+    // Financial / Dates
+    formData.append('date_hired', document.getElementById('empHiredDate').value);
+    formData.append('base_salary', document.getElementById('empSalary').value);
+    formData.append('date_terminated', document.getElementById('empTerminatedDate').value);
+
+    // 3. UI Loading State
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...';
+    btn.disabled = true;
+
+    try {
+        // 4. Send Request
+        const response = await fetch('./backend/save_employee.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Success: Close modal, refresh list, show alert
+            const modalEl = document.getElementById('employeeFormModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            modal.hide();
+            
+            // Refresh the main table
+            loadEmployees(); 
+            
+            // Optional: Reset form
+            document.getElementById('employeeForm').reset();
+            
+            alert(result.message); // Or use a nice toast notification
+        } else {
+            // Backend Error
+            alert('Error: ' + result.message);
+        }
+
+    } catch (error) {
+        console.error('Error saving employee:', error);
+        alert('An unexpected error occurred. Please try again.');
+    } finally {
+        // 5. Reset Button
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+  });
+
   // Initial load
   loadDropdowns();
   loadEmployees();
