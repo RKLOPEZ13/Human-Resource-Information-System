@@ -35,7 +35,8 @@ if (!password_verify($password, $user['password_hash'])) {
 
 $_SESSION['logged_in']          = true;
 $_SESSION['user_id']            = $user['id'];                
-$_SESSION['employee_number']    = $user['employee_number'];   
+$_SESSION['employee_number']    = $user['employee_number'];
+$_SESSION['role']               = $user['role'];
 $_SESSION['full_name']          = $user['full_name'];
 $_SESSION['first_name']         = $user['first_name'];
 $_SESSION['last_name']          = $user['last_name'];

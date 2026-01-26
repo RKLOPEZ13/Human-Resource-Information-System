@@ -1,5 +1,4 @@
 <?php
-// backend/save_employee.php
 header('Content-Type: application/json');
 require_once '../config/db.php';
 
@@ -8,39 +7,57 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// Collect and sanitize input
-$emp_number     = $_POST['emp_number'] ?? '';        // for edit
-$first_name     = trim($_POST['first_name'] ?? '');
-$last_name      = trim($_POST['last_name'] ?? '');
-$email          = trim($_POST['email'] ?? '');
-$phone          = $_POST['phone'] ?? '';
-$department     = $_POST['department'] ?? '';
-$position       = trim($_POST['position'] ?? '');
-$manager_number = $_POST['manager_id'] ?: null;
-$employment_type= $_POST['employment_type'] ?? 'Full-Time';
-$location       = $_POST['location'] ?? 'Headquarters';
-$status         = $_POST['status'] ?? 'Active';
-$emergency      = $_POST['emergency_contact'] ?? '';
-$address        = $_POST['address'] ?? '';
-$date_hired     = $_POST['date_hired'] ?? date('Y-m-d');
+// 1. Collect and sanitize input
+$emp_number      = $_POST['emp_number'] ?? '';
+$first_name      = trim($_POST['first_name'] ?? '');
+$last_name       = trim($_POST['last_name'] ?? '');
+$email           = trim($_POST['email'] ?? '');
+$phone           = $_POST['phone'] ?? '';
+$department      = $_POST['department'] ?? '';
+$position        = trim($_POST['position'] ?? '');
+$manager_id_raw  = $_POST['manager_id'] ?? '';
+$employment_type = $_POST['employment_type'] ?? 'Full-Time';
+$location        = $_POST['location'] ?? 'Headquarters';
+$status          = $_POST['status'] ?? 'Active';
+$emergency       = $_POST['emergency_contact'] ?? '';
+$address         = $_POST['address'] ?? '';
+$date_hired      = $_POST['date_hired'] ?? date('Y-m-d');
+$age            = !empty($_POST['age']) ? (int)$_POST['age'] : null;
+$base_salary    = !empty($_POST['base_salary']) ? (float)$_POST['base_salary'] : null;
+$date_terminated = !empty($_POST['date_terminated']) ? $_POST['date_terminated'] : null;
 
-// The '?: null' ensures they are correctly handled as NULL if the form field is empty.
-$age            = $_POST['age'] ?: null;
-$base_salary    = $_POST['base_salary'] ?: null;
-$date_terminated= $_POST['date_terminated'] ?: null;
+// 2. Handle manager_number - convert empty string to NULL
+$manager_number = null;
+if (!empty($manager_id_raw) && trim($manager_id_raw) !== '') {
+    $manager_number = trim($manager_id_raw);
+    
+    // Validate that the manager exists
+    $check_stmt = $conn->prepare("SELECT employee_number FROM employees WHERE employee_number = ?");
+    $check_stmt->bind_param("s", $manager_number);
+    $check_stmt->execute();
+    $manager_exists = $check_stmt->get_result()->fetch_assoc();
+    $check_stmt->close();
+    
+    if (!$manager_exists) {
+        echo json_encode([
+            'success' => false, 
+            'message' => "Invalid manager selected. Manager ID '$manager_number' does not exist."
+        ]);
+        exit;
+    }
+}
 
-// Basic validation
+// 3. Basic validation
 if (empty($first_name) || empty($last_name) || empty($email) || empty($department) || empty($position)) {
     echo json_encode(['success' => false, 'message' => 'Required fields missing']);
     exit;
 }
 
-// Get department_id from name
+// 4. Resolve Department ID
 $stmt = $conn->prepare("SELECT id FROM departments WHERE name = ?");
 $stmt->bind_param("s", $department);
 $stmt->execute();
-$result = $stmt->get_result();
-$dept_row = $result->fetch_assoc();
+$dept_row = $stmt->get_result()->fetch_assoc();
 
 if (!$dept_row) {
     echo json_encode(['success' => false, 'message' => 'Invalid department']);
@@ -62,32 +79,34 @@ try {
                 WHERE employee_number = ?";
 
         $stmt = $conn->prepare($sql);
-        // Bind type string is correct: 17 characters for 17 variables
-        $stmt->bind_param("ssssissssssssssss", 
+        $bind_types = "ssssississsssisds"; 
+        
+        $stmt->bind_param($bind_types, 
             $first_name, $last_name, $email, $phone,
             $dept_id, $position, $manager_number,
             $employment_type, $location, $status,
             $emergency, $address, $date_hired,
-            $age, $base_salary, $date_terminated, // New fields
-            $emp_number // WHERE condition
+            $age, $base_salary, $date_terminated,
+            $emp_number
         );
 
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => 'Employee updated successfully']);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Update failed: ' . $stmt->error]);
+        if (!$stmt->execute()) {
+            throw new Exception("Update failed: " . $stmt->error);
         }
+        echo json_encode(['success' => true, 'message' => 'Employee updated successfully']);
 
     } else {
         // =======================
         // ADD NEW EMPLOYEE
         // =======================
-        // Generate next EMP number
-        $result = $conn->query("SELECT MAX(CAST(SUBSTRING(employee_number, 4) AS UNSIGNED)) AS max_num FROM employees");
-        $row = $result->fetch_assoc();
+        
+        // 1. Generate the ID FIRST
+        $res = $conn->query("SELECT MAX(CAST(SUBSTRING(employee_number, 4) AS UNSIGNED)) AS max_num FROM employees");
+        $row = $res->fetch_assoc();
         $next = ($row['max_num'] ?? 1000) + 1;
         $new_emp_number = 'EMP' . str_pad($next, 4, '0', STR_PAD_LEFT);
 
+        // 2. Prepare the SQL
         $sql = "INSERT INTO employees (
             employee_number, first_name, last_name, email, phone,
             department_id, position, manager_number, employment_type,
@@ -96,30 +115,24 @@ try {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         $stmt = $conn->prepare($sql);
-        // <<< FIX HERE: Added the missing 's'. Now 17 characters for 17 variables.
-        $stmt->bind_param("sssssisssssssssss", 
-            $new_emp_number, $first_name, $last_name, $email, $phone,
+        $bind_types = "sssssisssssssisds"; 
+        
+        $stmt->bind_param($bind_types, 
+            $new_emp_number,
+            $first_name, $last_name, $email, $phone,
             $dept_id, $position, $manager_number,
             $employment_type, $location, $status,
             $emergency, $address, $date_hired,
-            $age, $base_salary, $date_terminated // New fields
+            $age, $base_salary, $date_terminated
         );
 
         if ($stmt->execute()) {
-            // Create leave balance record
             $conn->query("INSERT INTO leave_balances (employee_number) VALUES ('$new_emp_number')");
-
-            echo json_encode([
-                'success' => true,
-                'message' => 'Employee added successfully',
-                'employee_number' => $new_emp_number
-            ]);
+            echo json_encode(['success' => true, 'message' => 'Employee added successfully']);
         } else {
-            echo json_encode(['success' => false, 'message' => 'Insert failed: ' . $stmt->error]);
+            throw new Exception("Insert failed: " . $stmt->error);
         }
     }
-
 } catch (Exception $e) {
     echo json_encode(['success' => false, 'message' => $e->getMessage()]);
 }
-?>

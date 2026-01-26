@@ -12,6 +12,16 @@ require_once "PHPMailer/Exception.php";
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
+// Inside backend/attendance_data.php
+$role = $_SESSION['role'];
+$myEmpNum = $_SESSION['employee_number'];
+
+if ($role !== 'HR' && $role !== 'Admin') {
+    // FORCE the query to only look for the logged-in user
+    $employee_number_to_fetch = $myEmpNum;
+    $where_clause = "WHERE employee_number = '$myEmpNum'";
+}
+
 // Load SMTP settings from .env
 if (file_exists(__DIR__ . '/.env')) {
     foreach (file(__DIR__ . '/.env') as $line) {

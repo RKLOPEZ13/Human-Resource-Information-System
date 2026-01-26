@@ -1,8 +1,14 @@
+<?php
+// Ensure session variables are ready
+$userRole = $_SESSION['role'] ?? 'Employee';
+$isHR = ($userRole === 'HR' || $userRole === 'Admin');
+?>
+
 <div class="pagetitle">
   <h1>Attendance</h1>
   <nav>
     <ol class="breadcrumb">
-      <li class="breadcrumb-item"><a href="../index.php">Home</a></li>
+      <li class="breadcrumb-item"><a href="main.php?page=dashboard">Home</a></li>
       <li class="breadcrumb-item active">Attendance</li>
     </ol>
   </nav>
@@ -13,56 +19,64 @@
     
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
        <div>
-           <h5 class="card-title mb-0">Monthly View</h5>
-           <small class="text-muted">Hover over cells for time logs (Auto-refreshes every 5s)</small>
+           <h5 class="card-title mb-0"><?php echo $isHR ? 'Company Monthly View' : 'My Attendance Logs'; ?></h5>
+           <small class="text-muted">
+               <?php echo $isHR ? 'Hover over cells for time logs' : 'Your personal daily time records'; ?>
+           </small>
        </div>
        
-        <div class="d-flex gap-3 small align-items-center bg-light p-2 rounded flex-wrap">
-            <span><span class="badge bg-success">P</span> Present</span>
-            <span><span class="badge bg-danger">A</span> Absent</span>
-            <span><span class="badge bg-warning text-dark">L</span> Late</span>
-            <span><span class="badge bg-info text-dark">VL</span> Vacation Leave</span>
-            <span><span class="badge bg-primary">SL</span> Sick Leave</span>
-            <span><span class="badge bg-orange text-dark">EL</span> Emergency Leave</span>
-            <span><span class="badge bg-pink text-white">ML</span> Maternity Leave</span>
-            <span><span class="badge bg-teal text-white">PL</span> Paternity Leave</span>
-            <span><span class="badge bg-secondary">W</span> Weekend / Non-Working</span>
-            <span class="text-muted small">--</span> Missing Record
-        </div>
+       <div class="d-flex gap-3 small align-items-center bg-light p-2 rounded flex-wrap">
+           <span><span class="badge bg-success">P</span> Present</span>
+           <span><span class="badge bg-danger">A</span> Absent</span>
+           <span><span class="badge bg-warning text-dark">L</span> Late</span>
+           <span class="text-muted small">--</span> Missing
+       </div>
     </div>
 
     <div class="row g-2 mb-3 align-items-center">
-      <div class="col-md-auto">
-          <input type="month" class="form-control" id="monthFilter">
-      </div>
-      <div class="col-md-auto">
-          <select id="deptFilter" class="form-select" style="width: 220px;">
-              <option value="">All Departments</option>
-          </select>
-      </div>
-      <div class="col-md">
-          <input type="text" id="searchEmp" class="form-control" placeholder="Search employee by name...">
-      </div>
-      <div class="col-md-auto ms-auto d-flex gap-2">
-          <button class="btn btn-primary" id="markLeaveBtn" data-bs-toggle="modal" data-bs-target="#markLeaveModal">
+    <div class="col-md-auto">
+        <input type="month" class="form-control" id="monthFilter">
+    </div>
+
+    <?php if ($isHR): ?>
+        <div class="col-md-auto">
+            <select id="deptFilter" class="form-select" style="width: 220px;">
+                <option value="">All Departments</option>
+            </select>
+        </div>
+        <div class="col-md">
+            <input type="text" id="searchEmp" class="form-control" placeholder="Search employee by name...">
+        </div>
+        <div class="col-md-auto ms-auto d-flex gap-2">
+            <button class="btn btn-outline-secondary" id="viewToggleBtn" onclick="toggleViewMode()">
+                <i class="bi bi-list-ul"></i> Individual View
+            </button>
+            
+            <button class="btn btn-primary" id="markLeaveBtn" data-bs-toggle="modal" data-bs-target="#markLeaveModal">
             Set/Approve Leave
-          </button>
-          <button class="btn btn-success" id="exportBtn">
-            Export Excel
-          </button>
-      </div>
+            </button>
+            <button class="btn btn-success" id="exportBtn">Export Excel</button>
+        </div>
+    <?php else: ?>
+        <div class="col-md-auto ms-auto">
+            <button class="btn btn-outline-primary" onclick="window.location.reload()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh My Logs
+            </button>
+        </div>
+    <?php endif; ?>
     </div>
     
     <div id="alertContainer" class="mt-3"></div>
 
     <div class="table-responsive border rounded" style="max-height: 650px;">
-      <table class="table table-bordered text-center align-middle mb-0 table-hover" style="min-width: 1600px;">
+      <table class="table table-bordered text-center align-middle mb-0 table-hover" 
+             style="<?php echo $isHR ? 'min-width: 1600px;' : 'min-width: 100%;'; ?>">
         <thead class="table-light sticky-top" style="z-index: 1020;">
           <tr id="tableHeaderRow">
-            </tr>
+              </tr>
         </thead>
         <tbody id="attendanceGridBody">
-          <tr><td colspan="100%" class="text-center p-5">Loading data...</td></tr>
+          <tr><td colspan="100%" class="text-center p-5">Loading logs...</td></tr>
         </tbody>
       </table>
     </div>
@@ -135,6 +149,10 @@
 let refreshInterval;
 let popoverList = [];
 let employeeData = []; // Global store for employee details and balances (will be refreshed after approval)
+
+const isHR = <?php echo json_encode($isHR); ?>;
+let currentViewMode = isHR ? 'grid' : 'list';
+const userEmpNum = "<?php echo $_SESSION['employee_number']; ?>";
 
 // Initialization
 document.addEventListener('DOMContentLoaded', () => {
@@ -349,8 +367,8 @@ function fetchModalEmployees() {
 // 3. Main Data Fetcher (Grid)
 function fetchGridData() {
     const month = document.getElementById('monthFilter').value;
-    const dept = document.getElementById('deptFilter').value;
-    const search = document.getElementById('searchEmp').value;
+    const dept = isHR ? document.getElementById('deptFilter').value : '';
+    const search = isHR ? document.getElementById('searchEmp').value : '';
 
     const params = new URLSearchParams({
         action: 'grid',
@@ -362,11 +380,116 @@ function fetchGridData() {
     fetch(`./backend/attendance_data.php?${params.toString()}`)
         .then(response => response.json())
         .then(data => {
-            renderHeader(data.days_in_month);
-            renderBody(data);
+            const table = document.querySelector('.table-responsive table');
+            
+            // Logic for Individual View (Either regular Employee OR HR in list mode)
+            if (!isHR || currentViewMode === 'list') {
+                table.style.minWidth = '100%'; // Remove the 1600px width
+                renderEmployeeHeader(); 
+                renderEmployeeList(data);
+            } 
+            // Logic for HR Grid View
+            else {
+                table.style.minWidth = '1600px'; // Restore wide grid
+                renderHeader(data.days_in_month);
+                renderBody(data);
+            }
             initPopovers();
         })
         .catch(err => console.error("Error loading attendance:", err));
+}
+
+function toggleViewMode() {
+    const btn = document.getElementById('viewToggleBtn');
+    const headerRow = document.getElementById('tableHeaderRow');
+    
+    // Clear the header so renderHeader/renderEmployeeHeader can rebuild it fresh
+    headerRow.innerHTML = ''; 
+
+    if (currentViewMode === 'grid') {
+        currentViewMode = 'list';
+        btn.innerHTML = '<i class="bi bi-grid-3x3"></i> Grid View';
+        btn.classList.replace('btn-outline-secondary', 'btn-outline-primary');
+    } else {
+        currentViewMode = 'grid';
+        btn.innerHTML = '<i class="bi bi-list-ul"></i> Individual View';
+        btn.classList.replace('btn-outline-primary', 'btn-outline-secondary');
+    }
+    
+    fetchGridData();
+}
+
+function renderIndividualList(data) {
+    const tbody = document.getElementById('attendanceGridBody');
+    let html = '';
+
+    // If HR is searching for someone, target the first person in the results
+    // Otherwise, target themselves (userEmpNum)
+    let targetEmpNum = (isHR && data.employees.length > 0) 
+        ? data.employees[0].employee_number 
+        : userEmpNum;
+
+    const logs = data.logs[targetEmpNum] || {};
+
+    for (let d = 1; d <= data.days_in_month; d++) {
+        const log = logs[d] || null;
+        // ... build your <tr> rows here ...
+        html += `<tr><td>Day ${d}</td><td>${log ? log.status : '-'}</td></tr>`;
+    }
+    tbody.innerHTML = html;
+}
+
+// Simple list header for employees *(Important in Attendance)
+function renderEmployeeHeader() {
+    const headerRow = document.getElementById('tableHeaderRow');
+    headerRow.innerHTML = `
+        <th>Date</th>
+        <th>Status</th>
+        <th>Time In</th>
+        <th>Time Out</th>
+        <th>Undertime</th>
+        <th>Overtime</th>
+        <th>Notes</th>
+    `;
+}
+
+// Simple list body for employees
+function renderEmployeeList(data) {
+    const tbody = document.getElementById('attendanceGridBody');
+    let html = '';
+    
+    // Determine whose logs to show:
+    // 1. If HR is searching, show the first result found
+    // 2. Otherwise, show the logged-in user's logs
+    let targetEmpNum = userEmpNum; 
+    if (isHR && data.employees.length > 0 && document.getElementById('searchEmp').value !== '') {
+        targetEmpNum = data.employees[0].employee_number;
+    }
+
+    const myLogs = data.logs[targetEmpNum] || {};
+
+    if (data.employees.length === 0 && isHR) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center p-4">No employee found.</td></tr>';
+        return;
+    }
+
+    for (let d = 1; d <= data.days_in_month; d++) {
+        const log = myLogs[d] || null;
+        const dateObj = new Date(data.year, data.month - 1, d);
+        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+        
+        // Use your existing getCellContent to keep badges consistent
+        html += `<tr>
+            <td class="fw-bold">${data.month}/${d} (${dayName})</td>
+            <td>${getCellContent(log, d, data.year, data.month)}</td>
+            <td>${log ? log.time_in : '--'}</td>
+            <td>${log ? log.time_out : '--'}</td>
+            <td class="text-danger">${log ? log.undertime_hours : '0'}</td>
+            <td class="text-success">${log ? log.overtime_hours : '0'}</td>
+            <td class="text-start"><small>${log && log.notes ? log.notes : '-'}</small></td>
+        </tr>`;
+    }
+    tbody.innerHTML = html;
 }
 
 function renderHeader(days) {

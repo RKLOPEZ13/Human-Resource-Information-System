@@ -269,17 +269,10 @@ function viewEmployee(empNumber) {
     <div class="row g-4">
       <div class="col-md-4 text-center">
         <div class="text-center p-4 bg-light rounded">
-          <div class="display-1 text-secondary mb-3"></div>
+          <div class="display-1 text-secondary mb-3">👤</div>
           <h4>${emp.first_name} ${emp.last_name}</h4>
           <p class="text-muted mb-2">${emp.position}</p>
           ${getStatusBadge(emp.status)}
-        </div>
-        <div class="mt-3 p-3 border rounded text-start">
-          <p class="mb-1 small fw-bold text-primary">Compensation Details</p>
-          <div class="d-flex justify-content-between small">
-            <span class="fw-bold">Base Salary:</span> 
-            <span>${formatSalary(emp.base_salary)}</span>
-          </div>
         </div>
       </div>
       <div class="col-md-8">
@@ -311,6 +304,8 @@ function editEmployee(empNumber) {
   const emp = allEmployees.find(e => e.employee_number === empNumber);
   if (!emp) return;
 
+  console.log('Editing employee:', emp); // DEBUG - Check what data we have
+
   document.getElementById('employeeFormTitle').textContent = "Edit Employee";
   document.getElementById('empId').value = emp.employee_number;
   document.getElementById('firstName').value = emp.first_name;
@@ -318,22 +313,93 @@ function editEmployee(empNumber) {
   document.getElementById('empEmail').value = emp.email;
   document.getElementById('empPhone').value = emp.phone || '';
   document.getElementById('empAge').value = emp.age || '';
-  document.getElementById('empDept').value = emp.department_id || '';
+  
+  // FIXED: Use department name, not department_id
+  document.getElementById('empDept').value = emp.department || '';
+  
   document.getElementById('empPosition').value = emp.position;
+  
+  // FIXED: Use manager_number 
   document.getElementById('empManager').value = emp.manager_number || '';
+  
   document.getElementById('empType').value = emp.employment_type;
   document.getElementById('empLocation').value = emp.location;
   document.getElementById('empStatus').value = emp.status;
   document.getElementById('empEmergency').value = emp.emergency_contact || '';
   document.getElementById('empAddress').value = emp.address || '';
-  document.getElementById('empHiredDate').value = emp.date_hired;
+  
+  // FIXED: Make sure date_hired is set
+  document.getElementById('empHiredDate').value = emp.date_hired || '';
+  
   document.getElementById('empSalary').value = emp.base_salary || '';
   document.getElementById('empTerminatedDate').value = emp.date_terminated || '';
 
   new bootstrap.Modal('#employeeFormModal').show();
 }
 
+// Add this global listener for all Bootstrap modals
+document.addEventListener('DOMContentLoaded', function() {
+    const modals = document.querySelectorAll('.modal');
+    modals.forEach(modal => {
+        modal.addEventListener('hide.bs.modal', function() {
+            if (document.activeElement) {
+                document.activeElement.blur();
+            }
+        });
+    });
+});
+
 document.addEventListener("DOMContentLoaded", () => {
+
+  document.getElementById('saveEmployeeBtn')?.addEventListener('click', async () => {
+      const form = document.getElementById('employeeForm');
+
+      if (!form.checkValidity()) {
+          form.reportValidity();
+          return;
+      }
+
+      const formData = new FormData();
+      const managerValue = document.getElementById('empManager').value.trim();
+      
+      formData.append('emp_number', document.getElementById('empId').value);
+      formData.append('first_name', document.getElementById('firstName').value.trim());
+      formData.append('last_name', document.getElementById('lastName').value.trim());
+      formData.append('email', document.getElementById('empEmail').value.trim());
+      formData.append('phone', document.getElementById('empPhone').value.trim());
+      formData.append('department', document.getElementById('empDept').value);
+      formData.append('position', document.getElementById('empPosition').value.trim());
+      formData.append('manager_id', managerValue || '');
+      formData.append('employment_type', document.getElementById('empType').value);
+      formData.append('location', document.getElementById('empLocation').value);
+      formData.append('status', document.getElementById('empStatus').value);
+      formData.append('emergency_contact', document.getElementById('empEmergency').value.trim());
+      formData.append('address', document.getElementById('empAddress').value.trim());
+      formData.append('date_hired', document.getElementById('empHiredDate').value);
+      formData.append('age', document.getElementById('empAge').value);
+      formData.append('base_salary', document.getElementById('empSalary').value);
+      formData.append('date_terminated', document.getElementById('empTerminatedDate').value);
+
+      console.log('Manager value being sent:', managerValue || '(empty)');
+
+    try {
+        const response = await fetch('./backend/save_employee.php', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(result.message);
+            location.reload();
+        } else {
+            alert('Error: ' + result.message);
+        }
+    } catch (err) {
+        console.error('Submission error:', err);
+        alert('Failed to save employee. Check console for details.');
+    }
+});
 
   function filterAndPaginate() {
     const departmentFilter = document.getElementById('departmentFilter')?.value || '';
@@ -447,6 +513,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (json.success) {
         allEmployees = json.data;
+        console.log('Loaded employees:', allEmployees); // DEBUG - Check the data
         currentPage = 1;
         filterAndPaginate();
       }
@@ -455,15 +522,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  async function loadDropdowns() {
+async function loadDropdowns() {
     try {
-      const [deptRes, mgrRes] = await Promise.all([
-        fetch('./backend/department.php'),
-        fetch('./backend/managers.php')
-      ]);
+        const [deptRes, mgrRes] = await Promise.all([
+            fetch('./backend/department.php'),
+            fetch('./backend/managers.php')
+        ]);
 
-      const departments = await deptRes.json();
-      const managers = await mgrRes.json();
+        const departments = await deptRes.json();
+        const managers = await mgrRes.json();
+        
+        console.log('Loaded managers:', managers); // DEBUG
 
       const deptFilter = document.getElementById('departmentFilter');
       const deptSelect = document.getElementById('empDept');
@@ -479,13 +548,16 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (managerSelect) {
-        managerSelect.innerHTML = '<option value="">None (Top Level)</option>';
-        managers.forEach(m => managerSelect.add(new Option(m.full_name, m.employee_number)));
+          managerSelect.innerHTML = '<option value="">None (Top Level)</option>';
+          managers.forEach(m => {
+              // Use 'id' from your managers.php (which contains employee_number)
+              managerSelect.add(new Option(m.full_name, m.id));
+          });
       }
     } catch (err) {
-      console.error('Dropdown load failed:', err);
+        console.error('Dropdown load failed:', err);
     }
-  }
+}
 
   // Event listeners
   document.getElementById('departmentFilter')?.addEventListener('change', () => {
@@ -501,11 +573,15 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('employeeForm').reset();
     document.getElementById('employeeFormTitle').textContent = "Add New Employee";
     document.getElementById('empId').value = "";
+    
+    // Set today's date as default for date_hired
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('empHiredDate').value = today;
+    
     new bootstrap.Modal('#employeeFormModal').show();
   });
 
   document.getElementById('exportBtn')?.addEventListener('click', () => {
-    // Your export logic here (same as before)
     const departmentFilter = document.getElementById('departmentFilter')?.value || '';
     const searchTerm = (document.getElementById('searchEmployee')?.value || '').toLowerCase();
     let employeesToExport = allEmployees;
@@ -529,7 +605,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initial load
   loadDropdowns();
   loadEmployees();
-  setInterval(loadEmployees, 10000);
 });
 
 // Birthdays Section
@@ -607,6 +682,5 @@ $(document).on('click', '#showUpcomingBirthdays', function() {
 
 $(document).ready(function() {
   loadBirthdays();
-  setInterval(loadBirthdays, 3600000);
 });
 </script>
